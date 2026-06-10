@@ -1604,6 +1604,12 @@ class SetupWindow:
 
     def _build(self) -> None:
         self._configure_ttk()
+        try:
+            self.root.unbind_all("<MouseWheel>")
+            self.root.unbind_all("<Button-4>")
+            self.root.unbind_all("<Button-5>")
+        except tk.TclError:
+            pass
         for child in self.root.winfo_children():
             if not isinstance(child, tk.Toplevel):
                 child.destroy()
@@ -1617,9 +1623,70 @@ class SetupWindow:
         self.audio_titles.clear()
         self.audio_descriptions.clear()
 
-        tk.Frame(self.root, bg=self.palette.accent, height=self._s(4)).pack(fill="x")
-        outer = tk.Frame(self.root, bg=self.palette.bg, padx=self._s(26), pady=self._s(22))
-        outer.pack(fill="both", expand=True)
+        tk.Frame(self.root, bg=self.palette.accent, height=self._s(4)).pack(fill="x", side="top")
+
+        # Keep the primary action pinned to the bottom of the window. The setup
+        # content is intentionally scrollable because Advanced mode, large UI
+        # scale values and smaller laptop displays can otherwise push the start
+        # button below the visible viewport.
+        footer = tk.Frame(self.root, bg=self.palette.bg, padx=self._s(26), pady=(self._s(10), self._s(16)))
+        footer.pack(fill="x", side="bottom")
+        self.status_label = tk.Label(
+            footer,
+            textvariable=self.status_var,
+            font=self._font(10),
+            bg=self.palette.bg,
+            fg=self.palette.red,
+            justify="left",
+            wraplength=self._s(680),
+        )
+        self.status_label.pack(anchor="w", pady=(0, self._s(8)))
+        self._button(
+            footer,
+            "START LIVE TRANSLATION",
+            self._start,
+            bg=self.palette.accent,
+            fg="white",
+            pady=self._s(15),
+            font=self._font(13, "bold"),
+        ).pack(fill="x")
+        if self.setup_advanced_var.get():
+            tk.Label(
+                footer,
+                text=f"Debug log: {LOG_PATH}",
+                font=self._font(8),
+                bg=self.palette.bg,
+                fg=self.palette.text3,
+            ).pack(anchor="center", pady=(self._s(8), 0))
+
+        viewport = tk.Frame(self.root, bg=self.palette.bg)
+        viewport.pack(fill="both", expand=True, side="top")
+        self.setup_canvas = tk.Canvas(viewport, bg=self.palette.bg, highlightthickness=0, bd=0)
+        self.setup_scrollbar = ttk.Scrollbar(viewport, orient="vertical", command=self.setup_canvas.yview)
+        self.setup_canvas.configure(yscrollcommand=self.setup_scrollbar.set)
+        self.setup_scrollbar.pack(side="right", fill="y")
+        self.setup_canvas.pack(side="left", fill="both", expand=True)
+
+        outer = tk.Frame(self.setup_canvas, bg=self.palette.bg, padx=self._s(26), pady=self._s(18))
+        self.setup_canvas_window = self.setup_canvas.create_window((0, 0), window=outer, anchor="nw")
+
+        def _sync_scrollregion(_event: object = None) -> None:
+            try:
+                self.setup_canvas.configure(scrollregion=self.setup_canvas.bbox("all"))
+            except tk.TclError:
+                pass
+
+        def _sync_width(event: tk.Event) -> None:
+            try:
+                self.setup_canvas.itemconfigure(self.setup_canvas_window, width=event.width)
+            except tk.TclError:
+                pass
+
+        outer.bind("<Configure>", _sync_scrollregion)
+        self.setup_canvas.bind("<Configure>", _sync_width)
+        self.root.bind_all("<MouseWheel>", self._on_setup_mousewheel)
+        self.root.bind_all("<Button-4>", self._on_setup_mousewheel)
+        self.root.bind_all("<Button-5>", self._on_setup_mousewheel)
 
         self._build_header(outer)
         self._build_quick_theme_bar(outer)
@@ -1638,39 +1705,27 @@ class SetupWindow:
         if self.setup_advanced_var.get():
             self._card(outer, "Advanced output", "Optional controls for playback and troubleshooting.", self._build_advanced_card)
 
-        footer = tk.Frame(outer, bg=self.palette.bg)
-        footer.pack(fill="x", pady=(self._s(8), 0))
-        self.status_label = tk.Label(
-            footer,
-            textvariable=self.status_var,
-            font=self._font(10),
-            bg=self.palette.bg,
-            fg=self.palette.red,
-            justify="left",
-            wraplength=self._s(680),
-        )
-        self.status_label.pack(anchor="w", pady=(0, self._s(10)))
-        self._button(
-            footer,
-            "START LIVE TRANSLATION",
-            self._start,
-            bg=self.palette.accent,
-            fg="white",
-            pady=self._s(15),
-            font=self._font(13, "bold"),
-        ).pack(fill="x")
-        if self.setup_advanced_var.get():
-            tk.Label(
-                footer,
-                text=f"Debug log: {LOG_PATH}",
-                font=self._font(8),
-                bg=self.palette.bg,
-                fg=self.palette.text3,
-            ).pack(anchor="center", pady=(self._s(9), 0))
-
         self._refresh_devices()
         self._refresh_audio_cards()
         self._apply_source_mode_visuals()
+        _sync_scrollregion()
+
+    def _on_setup_mousewheel(self, event: tk.Event) -> None:
+        try:
+            if not hasattr(self, "setup_canvas") or not self.setup_canvas.winfo_exists():
+                return
+            if getattr(event, "num", None) == 4:
+                direction = -1
+            elif getattr(event, "num", None) == 5:
+                direction = 1
+            else:
+                delta = getattr(event, "delta", 0)
+                if not delta:
+                    return
+                direction = -1 if delta > 0 else 1
+            self.setup_canvas.yview_scroll(direction * 3, "units")
+        except tk.TclError:
+            pass
 
     def _build_header(self, parent: tk.Frame) -> None:
         header = tk.Frame(parent, bg=self.palette.bg)

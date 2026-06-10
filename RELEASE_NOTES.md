@@ -31,3 +31,10 @@ Desktop subtitle translator for Windows and macOS.
 - Added a live Appearance Studio preview for background, accent, opacity and setup UI scale.
 - Added configurable setup UI scaling from 85% to 130%.
 - Kept the existing realtime translation, microphone and system-audio capture pipeline unchanged.
+
+## v16.1 Setup footer hotfix
+
+- Pins the **START LIVE TRANSLATION** button to the bottom of the setup window.
+- Makes setup cards scrollable in Advanced mode and at larger UI-scale values.
+- Adds mouse-wheel scrolling on Windows and macOS.
+- Keeps the working realtime audio and translation pipeline unchanged.
