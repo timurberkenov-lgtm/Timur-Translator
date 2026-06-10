@@ -21,6 +21,9 @@ python3 -m venv .buildvenv
 .buildvenv/bin/python -m pip install --upgrade pip
 .buildvenv/bin/python -m pip install -r macos/requirements.txt pyinstaller
 
+.buildvenv/bin/python -m py_compile macos/timur_translator.py
+.buildvenv/bin/python tests/verify_source.py macos
+
 rm -rf build dist release Timur-Translator-Realtime-macOS-*.zip
 mkdir -p release
 iconutil -c icns assets/TimurTranslator.iconset -o assets/TimurTranslator.icns

@@ -1,0 +1,10 @@
+Timur Translator v16.3 Verified Update
+
+Upload the CONTENTS of this folder into the root of the existing GitHub repository.
+Allow GitHub to replace matching files, then commit the changes.
+
+For a public release:
+1. Open Actions -> Build desktop apps -> Run workflow.
+2. Verify that all three desktop package jobs finish successfully.
+3. Create a new tag/release, for example v1.1.2.
+4. The fixed release workflow will attach the Windows and macOS ZIP packages automatically.

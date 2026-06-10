@@ -54,3 +54,7 @@ Never commit an OpenAI API key. Each user enters their own key locally in the ap
 ## v16 setup customization
 
 The setup screen now supports Basic and Advanced modes, quick theme presets, custom colors, opacity, and setup UI scaling. Open `APPEARANCE` from the setup screen to preview changes live before saving.
+
+## v16.3 stability verification
+
+The repository now runs `tests/verify_source.py` before desktop packaging. It checks syntax, Tkinter spacing, accidental embedded secrets, PCM16 conversion, realtime-session configuration and headset priority without requiring audio hardware.

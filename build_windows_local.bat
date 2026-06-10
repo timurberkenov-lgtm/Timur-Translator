@@ -21,6 +21,11 @@ if errorlevel 1 goto :fail
 ".buildvenv\Scripts\python.exe" -m pip install -r windows\requirements.txt pyinstaller
 if errorlevel 1 goto :fail
 
+".buildvenv\Scripts\python.exe" -m py_compile windows\timur_translator.py
+if errorlevel 1 goto :fail
+".buildvenv\Scripts\python.exe" tests\verify_source.py windows
+if errorlevel 1 goto :fail
+
 rmdir /s /q build 2>nul
 rmdir /s /q dist 2>nul
 rmdir /s /q release 2>nul

@@ -1542,11 +1542,13 @@ class SetupWindow:
 
         self.root.title("Timur Translator · Realtime setup")
         self.root.geometry(self._geometry())
-        self.root.minsize(720, 780)
+        self.root.minsize(680, 560)
         self.root.configure(bg=self.palette.bg)
         self.root.resizable(True, True)
         try:
-            self.root.attributes("-alpha", float(self.appearance.get("opacity", 0.96)))
+            # Keep setup fully readable. The configurable opacity is applied to
+            # the live subtitle window only, not to this form.
+            self.root.attributes("-alpha", 1.0)
             self.root.attributes("-topmost", False)
             if sys.platform == "win32":
                 self.root.attributes("-transparentcolor", "")
@@ -1564,8 +1566,17 @@ class SetupWindow:
 
     def _geometry(self) -> str:
         scale = _clamp_float(self.appearance.get("setup_scale"), 0.85, 1.30, 1.0)
-        width = round(800 * scale)
-        height = round((880 if self.setup_advanced_var.get() else 790) * scale)
+        desired_width = round(800 * scale)
+        desired_height = round((820 if self.setup_advanced_var.get() else 740) * scale)
+        # Leave room for the OS taskbar / dock. The form body scrolls, while
+        # the primary action remains pinned to the bottom.
+        try:
+            screen_width = max(720, int(self.root.winfo_screenwidth()))
+            screen_height = max(640, int(self.root.winfo_screenheight()))
+        except tk.TclError:
+            screen_width, screen_height = 1366, 768
+        width = min(desired_width, max(680, screen_width - 64))
+        height = min(desired_height, max(560, screen_height - 96))
         return f"{width}x{height}"
 
     def _s(self, value: int) -> int:
@@ -1629,8 +1640,8 @@ class SetupWindow:
         # content is intentionally scrollable because Advanced mode, large UI
         # scale values and smaller laptop displays can otherwise push the start
         # button below the visible viewport.
-        footer = tk.Frame(self.root, bg=self.palette.bg, padx=self._s(26), pady=(self._s(10), self._s(16)))
-        footer.pack(fill="x", side="bottom")
+        footer = tk.Frame(self.root, bg=self.palette.bg, padx=self._s(26))
+        footer.pack(fill="x", side="bottom", pady=(self._s(10), self._s(16)))
         self.status_label = tk.Label(
             footer,
             textvariable=self.status_var,
@@ -1982,9 +1993,11 @@ class SetupWindow:
         self.appearance = dict(prefs)
         self.palette = build_palette(self.appearance)
         try:
-            self.root.attributes("-alpha", float(self.appearance.get("opacity", 0.96)))
+            # Preview theme and scale changes on setup, but keep the form opaque.
+            # Overlay opacity is applied later by TranslatorWindow.
+            self.root.attributes("-alpha", 1.0)
         except tk.TclError:
-            logging.warning("Could not update setup opacity")
+            logging.warning("Could not keep setup window opaque")
         if persist:
             self.cfg["appearance"] = dict(self.appearance)
             save_appearance(self.appearance)
@@ -2179,7 +2192,7 @@ class AppearanceWindow:
         self.preview_line.pack(anchor="w", pady=(5, 0))
 
         self._section(outer, "Window and setup")
-        self.opacity_label = self._scale_row(outer, "Window opacity", self.opacity, 45, 100, "%")
+        self.opacity_label = self._scale_row(outer, "Subtitle overlay opacity", self.opacity, 45, 100, "%")
         self.setup_scale_label = self._scale_row(outer, "Setup UI scale", self.setup_scale, 85, 130, "%")
 
         self._section(outer, "Subtitle typography")
@@ -2317,15 +2330,27 @@ class AppearanceWindow:
         self.preview_line.configure(bg=palette.surface, fg=palette.accent, font=(FONT, int(payload.get("translation_font_size", 18))))
         self.preview_title.master.configure(bg=palette.surface, highlightbackground=palette.border)
 
+    def _cancel_pending_preview(self) -> None:
+        if self.preview_after_id:
+            try:
+                self.top.after_cancel(self.preview_after_id)
+            except tk.TclError:
+                pass
+            self.preview_after_id = None
+
     def _save(self) -> None:
+        self._cancel_pending_preview()
         payload = self._payload()
         self.current = dict(payload)
         self.on_apply(payload, True)
-        self.top.destroy()
+        if self.top.winfo_exists():
+            self.top.destroy()
 
     def _cancel(self) -> None:
+        self._cancel_pending_preview()
         self.on_apply(self.original, False)
-        self.top.destroy()
+        if self.top.winfo_exists():
+            self.top.destroy()
 
     def _reset(self) -> None:
         defaults = load_appearance({"appearance": dict(APPEARANCE_DEFAULTS)})
@@ -2606,7 +2631,7 @@ class TranslatorWindow:
                 elif kind == "error":
                     text = str(event[1])
                     self.error_label.config(text=text[:150])
-                    self.root.after(7000, lambda: self.error_label.config(text=""))
+                    self.root.after(7000, self._clear_error_label)
                 elif kind == "input":
                     config = event[1]
                     if isinstance(config, AudioInputConfig):
@@ -2689,7 +2714,16 @@ class TranslatorWindow:
         self.root.clipboard_clear()
         self.root.clipboard_append(self.translation_buffer)
         self.error_label.config(text="Translation copied", fg=self.palette.green)
-        self.root.after(1700, lambda: self.error_label.config(text="", fg=self.palette.red))
+        self.root.after(1700, self._clear_error_label)
+
+    def _clear_error_label(self) -> None:
+        if self.closed:
+            return
+        try:
+            if self.error_label.winfo_exists():
+                self.error_label.config(text="", fg=self.palette.red)
+        except tk.TclError:
+            pass
 
     def _settings(self) -> None:
         self._store_geometry()
