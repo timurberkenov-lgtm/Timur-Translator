@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Timur Translator Realtime - Windows Interview Audio v12 build.
+Timur Translator Realtime - Windows v16 customizable setup build.
 
 Windows microphone OR system-audio loopback -> OpenAI Realtime Translation -> live subtitles.
 
@@ -102,6 +102,7 @@ APPEARANCE_DEFAULTS = {
     "background": THEME_PRESETS["Midnight Violet"]["background"],
     "accent": THEME_PRESETS["Midnight Violet"]["accent"],
     "opacity": 0.96,
+    "setup_scale": 1.0,
     "always_on_top": True,
     "show_original": True,
     "show_diagnostics": False,
@@ -191,6 +192,7 @@ def load_appearance(config: Optional[dict] = None) -> dict:
     prefs["background"] = _safe_hex(prefs.get("background"), preset["background"])
     prefs["accent"] = _safe_hex(prefs.get("accent"), preset["accent"])
     prefs["opacity"] = _clamp_float(prefs.get("opacity"), 0.45, 1.0, 0.96)
+    prefs["setup_scale"] = _clamp_float(prefs.get("setup_scale"), 0.85, 1.30, 1.0)
     prefs["always_on_top"] = bool(prefs.get("always_on_top", True))
     prefs["show_original"] = bool(prefs.get("show_original", True))
     prefs["show_diagnostics"] = bool(prefs.get("show_diagnostics", True))
@@ -1427,18 +1429,124 @@ class RealtimeTranslationClient:
                 pass
 
 
+class ToggleSwitch(tk.Canvas):
+    """Small reusable switch widget with a native-looking animated-style knob."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        variable: tk.BooleanVar,
+        *,
+        on_color: str,
+        off_color: str,
+        knob_color: str = "#ffffff",
+        command: Optional[Callable[[], None]] = None,
+        width: int = 46,
+        height: int = 24,
+        enabled: bool = True,
+    ) -> None:
+        super().__init__(
+            parent,
+            width=width,
+            height=height,
+            bg=parent.cget("bg"),
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2" if enabled else "arrow",
+        )
+        self.variable = variable
+        self.on_color = on_color
+        self.off_color = off_color
+        self.knob_color = knob_color
+        self.command = command
+        self.switch_width = width
+        self.switch_height = height
+        self.enabled = enabled
+        self.bind("<Button-1>", self._toggle)
+        self._trace_id = self.variable.trace_add("write", self._variable_changed)
+        self.bind("<Destroy>", self._cleanup, add="+")
+        self._draw()
+
+    def _cleanup(self, _event: object = None) -> None:
+        trace_id = getattr(self, "_trace_id", None)
+        if trace_id:
+            try:
+                self.variable.trace_remove("write", trace_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._trace_id = None
+
+    def _variable_changed(self, *_args: object) -> None:
+        try:
+            if self.winfo_exists():
+                self._draw()
+        except tk.TclError:
+            pass
+
+    def _toggle(self, _event: object = None) -> None:
+        if not self.enabled:
+            return
+        self.variable.set(not self.variable.get())
+        if self.command:
+            self.command()
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = bool(enabled)
+        self.configure(cursor="hand2" if self.enabled else "arrow")
+        self._draw()
+
+    def _draw(self) -> None:
+        self.delete("all")
+        padding = 2
+        radius = (self.switch_height - padding * 2) / 2
+        active = bool(self.variable.get())
+        track = self.on_color if active else self.off_color
+        if not self.enabled:
+            track = _blend_hex(track, self.cget("bg"), 0.55)
+        self.create_oval(padding, padding, padding + radius * 2, self.switch_height - padding, fill=track, outline=track)
+        self.create_oval(self.switch_width - padding - radius * 2, padding, self.switch_width - padding, self.switch_height - padding, fill=track, outline=track)
+        self.create_rectangle(padding + radius, padding, self.switch_width - padding - radius, self.switch_height - padding, fill=track, outline=track)
+        knob_x = self.switch_width - padding - radius if active else padding + radius
+        knob = self.knob_color if self.enabled else _blend_hex(self.knob_color, self.cget("bg"), 0.35)
+        self.create_oval(knob_x - radius + 1, padding + 1, knob_x + radius - 1, self.switch_height - padding - 1, fill=knob, outline=knob)
+
+
 class SetupWindow:
+    """Customizable, card-based setup screen shared by Windows and macOS builds."""
+
     def __init__(self, root: tk.Tk, on_start: Callable[..., None]) -> None:
         self.root = root
         self.on_start = on_start
         self.cfg = load_config()
+        self.appearance = load_appearance(self.cfg)
+        self.palette = build_palette(self.appearance)
         self.devices: list[DeviceInfo] = []
+        self.audio_cards: dict[str, tk.Frame] = {}
+        self.audio_titles: dict[str, tk.Label] = {}
+        self.audio_descriptions: dict[str, tk.Label] = {}
+        self.appearance_dialog: Optional[AppearanceWindow] = None
+        self.style: Optional[ttk.Style] = None
+
+        self.key_var = tk.StringVar(value=os.getenv("OPENAI_API_KEY", self.cfg.get("openai_key", "")))
+        self.remember_var = tk.BooleanVar(value=bool(self.cfg.get("remember_key", False)))
+        self.lang_var = tk.StringVar(value=self.cfg.get("language_label", "Русский"))
+        default_source_label = self.cfg.get("audio_source_label", next(iter(AUDIO_SOURCE_OPTIONS)))
+        if default_source_label not in AUDIO_SOURCE_OPTIONS:
+            default_source_label = next(iter(AUDIO_SOURCE_OPTIONS))
+        self.audio_source_var = tk.StringVar(value=default_source_label)
+        self.device_var = tk.StringVar()
+        self.auto_switch_headset_var = tk.BooleanVar(value=bool(self.cfg.get("auto_switch_headset", True)))
+        self.play_audio_var = tk.BooleanVar(value=bool(self.cfg.get("play_audio", False)))
+        self.setup_advanced_var = tk.BooleanVar(value=bool(self.cfg.get("setup_advanced", False)))
+        self.status_var = tk.StringVar(value="")
+
         self.root.title("Timur Translator · Realtime setup")
-        self.root.geometry("620x860")
-        self.root.configure(bg=BG)
-        self.root.resizable(False, False)
+        self.root.geometry(self._geometry())
+        self.root.minsize(720, 780)
+        self.root.configure(bg=self.palette.bg)
+        self.root.resizable(True, True)
         try:
-            self.root.attributes("-alpha", 1.0)
+            self.root.attributes("-alpha", float(self.appearance.get("opacity", 0.96)))
             self.root.attributes("-topmost", False)
             if sys.platform == "win32":
                 self.root.attributes("-transparentcolor", "")
@@ -1446,97 +1554,389 @@ class SetupWindow:
             logging.warning("Could not reset setup-window attributes")
         self._build()
 
-    def _build(self) -> None:
-        tk.Frame(self.root, bg=ACCENT, height=3).pack(fill="x")
-        tk.Label(self.root, text="Timur Translator", font=(FONT, 22, "bold"), bg=BG, fg=TEXT).pack(pady=(30, 3))
-        tk.Label(self.root, text="OpenAI Realtime · Windows microphone + system-audio loopback", font=(FONT, 12), bg=BG, fg=TEXT2).pack(pady=(0, 18))
-        form = tk.Frame(self.root, bg=BG, padx=42)
-        form.pack(fill="both", expand=True)
+    @property
+    def platform_name(self) -> str:
+        return "macOS" if sys.platform == "darwin" else "Windows"
 
-        tk.Label(form, text="OPENAI API KEY", font=(FONT, 10, "bold"), bg=BG, fg=TEXT2, anchor="w").pack(fill="x", pady=(8, 4))
-        self.key = tk.Entry(form, font=(FONT, 12), bg=SURFACE2, fg=TEXT, insertbackground=TEXT, relief="flat", bd=10, show="•")
-        self.key.insert(0, os.getenv("OPENAI_API_KEY", self.cfg.get("openai_key", "")))
-        self.key.pack(fill="x", ipady=4)
+    @property
+    def is_macos(self) -> bool:
+        return sys.platform == "darwin"
 
-        self.remember = tk.BooleanVar(value=bool(self.cfg.get("remember_key", False)))
-        tk.Checkbutton(
-            form,
-            text="Remember key on this computer (stored locally)",
-            variable=self.remember,
-            font=(FONT, 10),
-            bg=BG,
-            fg=TEXT2,
-            activebackground=BG,
-            activeforeground=TEXT,
-            selectcolor=SURFACE2,
-        ).pack(anchor="w", pady=(7, 8))
+    def _geometry(self) -> str:
+        scale = _clamp_float(self.appearance.get("setup_scale"), 0.85, 1.30, 1.0)
+        width = round(800 * scale)
+        height = round((880 if self.setup_advanced_var.get() else 790) * scale)
+        return f"{width}x{height}"
 
-        tk.Label(form, text="TARGET LANGUAGE", font=(FONT, 10, "bold"), bg=BG, fg=TEXT2, anchor="w").pack(fill="x", pady=(8, 4))
-        self.lang = tk.StringVar(value=self.cfg.get("language_label", "Русский"))
-        ttk.Combobox(form, textvariable=self.lang, values=list(LANGUAGES), state="readonly", font=(FONT, 12)).pack(fill="x", ipady=5)
+    def _s(self, value: int) -> int:
+        return max(1, round(value * _clamp_float(self.appearance.get("setup_scale"), 0.85, 1.30, 1.0)))
 
-        tk.Label(form, text="AUDIO SOURCE", font=(FONT, 10, "bold"), bg=BG, fg=TEXT2, anchor="w").pack(fill="x", pady=(14, 4))
-        default_source_label = self.cfg.get("audio_source_label", next(iter(AUDIO_SOURCE_OPTIONS)))
-        if default_source_label not in AUDIO_SOURCE_OPTIONS:
-            default_source_label = next(iter(AUDIO_SOURCE_OPTIONS))
-        self.audio_source = tk.StringVar(value=default_source_label)
-        ttk.Combobox(form, textvariable=self.audio_source, values=list(AUDIO_SOURCE_OPTIONS), state="readonly", font=(FONT, 11)).pack(fill="x", ipady=5)
-        tk.Label(
-            form,
-            text="For YouTube or an online interview choose System audio. It captures what you hear in speakers or headphones. Choose Microphone only when you want to translate your own voice.",
-            font=(FONT, 9), bg=BG, fg=TEXT3, justify="left", wraplength=520,
-        ).pack(fill="x", pady=(6, 2))
+    def _font(self, size: int, weight: Optional[str] = None) -> tuple:
+        scaled = self._s(size)
+        return (FONT, scaled, weight) if weight else (FONT, scaled)
 
-        top = tk.Frame(form, bg=BG)
-        top.pack(fill="x", pady=(14, 4))
-        tk.Label(top, text="MICROPHONE (USED ONLY IN MICROPHONE MODE)", font=(FONT, 10, "bold"), bg=BG, fg=TEXT2, anchor="w").pack(side="left")
-        tk.Button(top, text="REFRESH", font=(FONT, 8, "bold"), bg=SURFACE2, fg=TEXT2, relief="flat", command=self._refresh_devices).pack(side="right")
-
-        self.device = tk.StringVar()
-        self.device_box = ttk.Combobox(form, textvariable=self.device, state="readonly", font=(FONT, 11))
-        self.device_box.pack(fill="x", ipady=5)
-
-        # Create the status label before enumerating microphones. Device enumeration
-        # can update the status immediately, including during the first window build.
-        self.status = tk.Label(form, text="", font=(FONT, 10), bg=BG, fg=RED, wraplength=480, justify="left")
-        self._refresh_devices()
-
-        tk.Label(
-            form,
-            text="Leave AUTO selected. The app tests Windows driver duplicates, picks a headset microphone first when one is connected, and falls back to the laptop microphone when needed.",
-            font=(FONT, 9), bg=BG, fg=TEXT3, justify="left", wraplength=520,
-        ).pack(fill="x", pady=(7, 2))
-
-        self.auto_switch_headset = tk.BooleanVar(value=bool(self.cfg.get("auto_switch_headset", True)))
-        tk.Checkbutton(
-            form,
-            text="AUTO: switch to headset microphone when headphones are connected",
-            variable=self.auto_switch_headset,
-            font=(FONT, 10), bg=BG, fg=TEXT2, activebackground=BG,
-            activeforeground=TEXT, selectcolor=SURFACE2,
-        ).pack(anchor="w", pady=(14, 2))
-
-        self.play_audio = tk.BooleanVar(value=bool(self.cfg.get("play_audio", False)))
-        tk.Checkbutton(
-            form,
-            text="Play translated voice through speakers (can create feedback)",
-            variable=self.play_audio,
-            font=(FONT, 10), bg=BG, fg=TEXT2, activebackground=BG,
-            activeforeground=TEXT, selectcolor=SURFACE2,
-        ).pack(anchor="w", pady=(18, 8))
-
-        tk.Button(
-            form,
-            text="START LIVE TRANSLATION",
-            font=(FONT, 12, "bold"),
-            bg=ACCENT,
-            fg="white",
+    def _configure_ttk(self) -> None:
+        self.style = ttk.Style(self.root)
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+        combo_bg = self.palette.surface2
+        self.style.configure(
+            "Timur.TCombobox",
+            fieldbackground=combo_bg,
+            background=combo_bg,
+            foreground=self.palette.text,
+            bordercolor=self.palette.border,
+            darkcolor=combo_bg,
+            lightcolor=combo_bg,
+            arrowcolor=self.palette.text2,
             relief="flat",
-            pady=14,
-            command=self._start,
-        ).pack(fill="x", pady=(16, 0))
-        self.status.pack(pady=9)
-        tk.Label(form, text=f"Debug log: {LOG_PATH}", font=(FONT, 8), bg=BG, fg=TEXT3, wraplength=480).pack(pady=(6, 0))
+            padding=self._s(7),
+        )
+        self.style.map(
+            "Timur.TCombobox",
+            fieldbackground=[("readonly", combo_bg), ("disabled", self.palette.surface)],
+            selectbackground=[("readonly", combo_bg)],
+            selectforeground=[("readonly", self.palette.text)],
+            foreground=[("readonly", self.palette.text), ("disabled", self.palette.text3)],
+        )
+
+    def _build(self) -> None:
+        self._configure_ttk()
+        for child in self.root.winfo_children():
+            if not isinstance(child, tk.Toplevel):
+                child.destroy()
+
+        self.root.configure(bg=self.palette.bg)
+        try:
+            self.root.geometry(self._geometry())
+        except tk.TclError:
+            pass
+        self.audio_cards.clear()
+        self.audio_titles.clear()
+        self.audio_descriptions.clear()
+
+        tk.Frame(self.root, bg=self.palette.accent, height=self._s(4)).pack(fill="x")
+        outer = tk.Frame(self.root, bg=self.palette.bg, padx=self._s(26), pady=self._s(22))
+        outer.pack(fill="both", expand=True)
+
+        self._build_header(outer)
+        self._build_quick_theme_bar(outer)
+        self._card(outer, "Connection", "Use your own OpenAI API key. It stays local when saving is enabled.", self._build_connection_card)
+        self._card(outer, "Translation", "Choose the language for live subtitles and translated output.", self._build_translation_card)
+        self._card(outer, "Audio source", "Choose your microphone or capture the audio playing on the computer.", self._build_audio_source_card)
+
+        source_mode = AUDIO_SOURCE_OPTIONS.get(self.audio_source_var.get(), "system")
+        if source_mode == "microphone" or self.setup_advanced_var.get():
+            self._card(
+                outer,
+                "Microphone",
+                "Used only in Microphone mode. AUTO is recommended and prefers a connected headset microphone.",
+                self._build_microphone_card,
+            )
+        if self.setup_advanced_var.get():
+            self._card(outer, "Advanced output", "Optional controls for playback and troubleshooting.", self._build_advanced_card)
+
+        footer = tk.Frame(outer, bg=self.palette.bg)
+        footer.pack(fill="x", pady=(self._s(8), 0))
+        self.status_label = tk.Label(
+            footer,
+            textvariable=self.status_var,
+            font=self._font(10),
+            bg=self.palette.bg,
+            fg=self.palette.red,
+            justify="left",
+            wraplength=self._s(680),
+        )
+        self.status_label.pack(anchor="w", pady=(0, self._s(10)))
+        self._button(
+            footer,
+            "START LIVE TRANSLATION",
+            self._start,
+            bg=self.palette.accent,
+            fg="white",
+            pady=self._s(15),
+            font=self._font(13, "bold"),
+        ).pack(fill="x")
+        if self.setup_advanced_var.get():
+            tk.Label(
+                footer,
+                text=f"Debug log: {LOG_PATH}",
+                font=self._font(8),
+                bg=self.palette.bg,
+                fg=self.palette.text3,
+            ).pack(anchor="center", pady=(self._s(9), 0))
+
+        self._refresh_devices()
+        self._refresh_audio_cards()
+        self._apply_source_mode_visuals()
+
+    def _build_header(self, parent: tk.Frame) -> None:
+        header = tk.Frame(parent, bg=self.palette.bg)
+        header.pack(fill="x", pady=(0, self._s(10)))
+        title_box = tk.Frame(header, bg=self.palette.bg)
+        title_box.pack(side="left", fill="x", expand=True)
+        tk.Label(title_box, text="Timur Translator", font=self._font(27, "bold"), bg=self.palette.bg, fg=self.palette.text).pack(anchor="w")
+        tk.Label(
+            title_box,
+            text="Realtime translation for interviews, meetings and video",
+            font=self._font(11),
+            bg=self.palette.bg,
+            fg=self.palette.text2,
+        ).pack(anchor="w", pady=(self._s(3), 0))
+        tk.Label(
+            title_box,
+            text=("OpenAI Realtime · macOS microphone + BlackHole system audio" if self.is_macos else "OpenAI Realtime · Windows microphone + WASAPI loopback"),
+            font=self._font(9),
+            bg=self.palette.bg,
+            fg=self.palette.text3,
+        ).pack(anchor="w", pady=(self._s(5), 0))
+
+        actions = tk.Frame(header, bg=self.palette.bg)
+        actions.pack(side="right", anchor="n")
+        self._button(actions, "APPEARANCE", self._open_appearance, bg=self.palette.surface2, fg=self.palette.text, pady=self._s(8)).pack(side="left", padx=(0, self._s(8)))
+        self._button(actions, "RESET STYLE", self._reset_appearance, bg=self.palette.surface2, fg=self.palette.text2, pady=self._s(8)).pack(side="left")
+
+        mode_bar = tk.Frame(parent, bg=self.palette.bg)
+        mode_bar.pack(fill="x", pady=(self._s(3), self._s(12)))
+        tk.Label(mode_bar, text="Setup mode", font=self._font(9, "bold"), bg=self.palette.bg, fg=self.palette.text3).pack(side="left")
+        buttons = tk.Frame(mode_bar, bg=self.palette.bg)
+        buttons.pack(side="right")
+        advanced = self.setup_advanced_var.get()
+        self._pill(buttons, "BASIC", not advanced, lambda: self._set_setup_mode(False)).pack(side="left", padx=(0, self._s(5)))
+        self._pill(buttons, "ADVANCED", advanced, lambda: self._set_setup_mode(True)).pack(side="left")
+
+    def _build_quick_theme_bar(self, parent: tk.Frame) -> None:
+        bar = tk.Frame(parent, bg=self.palette.surface, highlightthickness=1, highlightbackground=self.palette.border, padx=self._s(12), pady=self._s(10))
+        bar.pack(fill="x", pady=(0, self._s(12)))
+        tk.Label(bar, text="Quick theme", font=self._font(9, "bold"), bg=self.palette.surface, fg=self.palette.text3).pack(side="left")
+        for name in ("Midnight Violet", "Graphite Mint", "Ocean Glass", "Crimson Night", "Soft Light"):
+            preset = THEME_PRESETS[name]
+            selected = self.appearance.get("theme") == name
+            button = tk.Button(
+                bar,
+                text=name,
+                font=self._font(8, "bold" if selected else None),
+                bg=preset["accent"] if selected else self.palette.surface2,
+                fg="white" if selected else self.palette.text2,
+                activebackground=preset["accent"],
+                activeforeground="white",
+                relief="flat",
+                bd=0,
+                padx=self._s(9),
+                pady=self._s(5),
+                cursor="hand2",
+                command=lambda chosen=name: self._apply_quick_theme(chosen),
+            )
+            button.pack(side="left", padx=(self._s(8), 0))
+
+    def _card(self, parent: tk.Widget, title: str, subtitle: str, builder: Callable[[tk.Frame], None]) -> None:
+        card = tk.Frame(
+            parent,
+            bg=self.palette.surface,
+            highlightthickness=1,
+            highlightbackground=self.palette.border,
+            padx=self._s(16),
+            pady=self._s(13),
+        )
+        card.pack(fill="x", pady=(0, self._s(11)))
+        tk.Label(card, text=title, font=self._font(14, "bold"), bg=self.palette.surface, fg=self.palette.text).pack(anchor="w")
+        tk.Label(
+            card,
+            text=subtitle,
+            font=self._font(9),
+            bg=self.palette.surface,
+            fg=self.palette.text3,
+            justify="left",
+            wraplength=self._s(690),
+        ).pack(anchor="w", pady=(self._s(3), self._s(10)))
+        content = tk.Frame(card, bg=self.palette.surface)
+        content.pack(fill="x")
+        builder(content)
+
+    def _build_connection_card(self, parent: tk.Frame) -> None:
+        self._field_label(parent, "OpenAI API key")
+        self.key = tk.Entry(
+            parent,
+            textvariable=self.key_var,
+            font=self._font(12),
+            bg=self.palette.surface2,
+            fg=self.palette.text,
+            insertbackground=self.palette.text,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=self.palette.border,
+            show="•",
+        )
+        self.key.pack(fill="x", ipady=self._s(9))
+        self._switch_row(parent, "Remember key on this computer", "Stored only in the local config file on this device.", self.remember_var).pack(fill="x", pady=(self._s(9), 0))
+
+    def _build_translation_card(self, parent: tk.Frame) -> None:
+        self._field_label(parent, "Target language")
+        ttk.Combobox(
+            parent,
+            textvariable=self.lang_var,
+            values=list(LANGUAGES),
+            state="readonly",
+            font=self._font(12),
+            style="Timur.TCombobox",
+        ).pack(fill="x", ipady=self._s(5))
+
+    def _build_audio_source_card(self, parent: tk.Frame) -> None:
+        grid = tk.Frame(parent, bg=self.palette.surface)
+        grid.pack(fill="x")
+        grid.grid_columnconfigure(0, weight=1)
+        grid.grid_columnconfigure(1, weight=1)
+        system_text = "Translate YouTube, Zoom, Meet or any audio playing through BlackHole." if self.is_macos else "Translate YouTube, Zoom, Meet or any sound playing through Windows."
+        items = [
+            ("microphone", "🎤  Microphone", "Translate my own voice from the selected microphone.", "For speaking"),
+            ("system", "🔊  System audio", system_text, "Recommended"),
+        ]
+        for column, (mode, title, description, badge_text) in enumerate(items):
+            holder = tk.Frame(grid, cursor="hand2")
+            holder.grid(row=0, column=column, sticky="nsew", padx=(0, self._s(7)) if column == 0 else (self._s(7), 0))
+            card = tk.Frame(holder, bg=self.palette.surface2, highlightthickness=1, highlightbackground=self.palette.border, padx=self._s(12), pady=self._s(12), cursor="hand2")
+            card.pack(fill="both", expand=True)
+            badge = tk.Label(card, text=badge_text, font=self._font(8, "bold"), bg=self.palette.surface2, fg=self.palette.text3, cursor="hand2")
+            badge.pack(anchor="w")
+            title_label = tk.Label(card, text=title, font=self._font(12, "bold"), bg=self.palette.surface2, fg=self.palette.text, cursor="hand2")
+            title_label.pack(anchor="w", pady=(self._s(7), self._s(3)))
+            description_label = tk.Label(card, text=description, font=self._font(9), bg=self.palette.surface2, fg=self.palette.text2, justify="left", wraplength=self._s(285), cursor="hand2")
+            description_label.pack(anchor="w")
+            self.audio_cards[mode] = card
+            self.audio_titles[mode] = title_label
+            self.audio_descriptions[mode] = description_label
+            for widget in (holder, card, badge, title_label, description_label):
+                widget.bind("<Button-1>", lambda _event, selected=mode: self._set_audio_source(selected))
+
+    def _build_microphone_card(self, parent: tk.Frame) -> None:
+        top = tk.Frame(parent, bg=self.palette.surface)
+        top.pack(fill="x")
+        tk.Label(top, text="Input device", font=self._font(10, "bold"), bg=self.palette.surface, fg=self.palette.text2, anchor="w").pack(side="left")
+        self._button(top, "REFRESH", self._refresh_devices, bg=self.palette.surface2, fg=self.palette.text2, pady=self._s(7)).pack(side="right")
+        self.device_box = ttk.Combobox(parent, textvariable=self.device_var, state="readonly", font=self._font(11), style="Timur.TCombobox")
+        self.device_box.pack(fill="x", ipady=self._s(5), pady=(self._s(5), 0))
+        self.microphone_hint = tk.Label(parent, text="", font=self._font(9), bg=self.palette.surface, fg=self.palette.text3, justify="left", wraplength=self._s(680))
+        self.microphone_hint.pack(anchor="w", pady=(self._s(7), 0))
+        if self.setup_advanced_var.get():
+            self._switch_row(parent, "Auto-switch to a headset microphone", "When headphones appear, prefer their microphone automatically.", self.auto_switch_headset_var).pack(fill="x", pady=(self._s(9), 0))
+
+    def _build_advanced_card(self, parent: tk.Frame) -> None:
+        self._switch_row(parent, "Play translated voice through speakers", "Keep this off in System audio mode to avoid a feedback loop.", self.play_audio_var).pack(fill="x")
+        tk.Label(parent, text=f"Debug log: {LOG_PATH}", font=self._font(8), bg=self.palette.surface, fg=self.palette.text3, wraplength=self._s(680)).pack(anchor="w", pady=(self._s(10), 0))
+
+    def _field_label(self, parent: tk.Widget, text: str) -> tk.Label:
+        label = tk.Label(parent, text=text, font=self._font(10, "bold"), bg=parent.cget("bg"), fg=self.palette.text2, anchor="w")
+        label.pack(fill="x", pady=(0, self._s(5)))
+        return label
+
+    def _switch_row(self, parent: tk.Widget, title: str, description: str, variable: tk.BooleanVar) -> tk.Frame:
+        row = tk.Frame(parent, bg=parent.cget("bg"))
+        text_box = tk.Frame(row, bg=parent.cget("bg"))
+        text_box.pack(side="left", fill="x", expand=True)
+        tk.Label(text_box, text=title, font=self._font(10, "bold"), bg=parent.cget("bg"), fg=self.palette.text2, anchor="w").pack(anchor="w")
+        tk.Label(text_box, text=description, font=self._font(8), bg=parent.cget("bg"), fg=self.palette.text3, anchor="w", justify="left", wraplength=self._s(560)).pack(anchor="w", pady=(self._s(2), 0))
+        ToggleSwitch(row, variable, on_color=self.palette.accent, off_color=self.palette.border, command=self._source_switch_changed if variable is self.play_audio_var else None).pack(side="right", padx=(self._s(10), 0))
+        return row
+
+    @staticmethod
+    def _button(parent: tk.Widget, text: str, command: Callable[[], None], bg: str, fg: str, pady: int = 9, font: Optional[tuple] = None) -> tk.Button:
+        return tk.Button(parent, text=text, font=font or (FONT, 10, "bold"), bg=bg, fg=fg, activebackground=bg, activeforeground=fg, relief="flat", bd=0, padx=12, pady=pady, highlightthickness=0, cursor="hand2", command=command)
+
+    def _pill(self, parent: tk.Widget, text: str, active: bool, command: Callable[[], None]) -> tk.Button:
+        return self._button(parent, text, command, bg=self.palette.accent if active else self.palette.surface2, fg="white" if active else self.palette.text2, pady=self._s(5), font=self._font(8, "bold"))
+
+    def _set_status(self, text: str, color: Optional[str] = None) -> None:
+        self.status_var.set(text)
+        if hasattr(self, "status_label"):
+            self.status_label.configure(fg=color or self.palette.red)
+
+    def _set_setup_mode(self, advanced: bool) -> None:
+        if self.setup_advanced_var.get() == advanced:
+            return
+        self.setup_advanced_var.set(advanced)
+        self.cfg["setup_advanced"] = advanced
+        self.cfg["appearance"] = dict(self.appearance)
+        try:
+            save_config(self.cfg)
+        except Exception:
+            logging.exception("Could not save setup mode")
+        self._build()
+
+    def _apply_quick_theme(self, theme_name: str) -> None:
+        preset = THEME_PRESETS.get(theme_name)
+        if not preset:
+            return
+        prefs = dict(self.appearance)
+        prefs.update({"theme": theme_name, "background": preset["background"], "accent": preset["accent"]})
+        self._apply_appearance(load_appearance({"appearance": prefs}), True)
+
+    def _set_audio_source(self, mode: str) -> None:
+        label = next((label for label, value in AUDIO_SOURCE_OPTIONS.items() if value == mode), next(iter(AUDIO_SOURCE_OPTIONS)))
+        self.audio_source_var.set(label)
+        self._refresh_audio_cards()
+        self._apply_source_mode_visuals()
+        # Basic mode dynamically hides microphone settings for system audio.
+        if not self.setup_advanced_var.get():
+            self._build()
+
+    def _refresh_audio_cards(self) -> None:
+        selected = AUDIO_SOURCE_OPTIONS.get(self.audio_source_var.get(), "system")
+        for mode, card in self.audio_cards.items():
+            active = mode == selected
+            card_bg = self.palette.accent if active else self.palette.surface2
+            title_fg = "white" if active else self.palette.text
+            text_fg = _blend_hex("#ffffff", self.palette.accent, 0.16) if active else self.palette.text2
+            card.configure(bg=card_bg, highlightbackground=self.palette.accent if active else self.palette.border)
+            for child in card.winfo_children():
+                child.configure(bg=card_bg)
+            self.audio_titles[mode].configure(bg=card_bg, fg=title_fg)
+            self.audio_descriptions[mode].configure(bg=card_bg, fg=text_fg)
+
+    def _apply_source_mode_visuals(self) -> None:
+        try:
+            if not hasattr(self, "device_box") or not self.device_box.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        is_mic = AUDIO_SOURCE_OPTIONS.get(self.audio_source_var.get(), "system") == "microphone"
+        self.device_box.configure(state="readonly" if is_mic else "disabled")
+        if self.is_macos:
+            normal_hint = "AUTO prefers a connected headset microphone and falls back to the Mac microphone when needed."
+            system_hint = "Microphone settings are inactive while System audio is selected. Configure BlackHole 2ch and a Multi-Output Device in Audio MIDI Setup."
+        else:
+            normal_hint = "AUTO tests Windows driver duplicates, prefers a headset microphone, and falls back to the laptop microphone."
+            system_hint = "Microphone settings are inactive while System audio is selected. Windows audio is captured through the playback loopback device."
+        self.microphone_hint.configure(text=normal_hint if is_mic else system_hint, fg=self.palette.text2 if is_mic else self.palette.text3)
+
+    def _source_switch_changed(self) -> None:
+        if AUDIO_SOURCE_OPTIONS.get(self.audio_source_var.get(), "system") == "system" and self.play_audio_var.get():
+            self.play_audio_var.set(False)
+            self._set_status("Translated voice playback is disabled in System audio mode to prevent feedback.", self.palette.amber)
+
+    def _open_appearance(self) -> None:
+        if self.appearance_dialog and self.appearance_dialog.top.winfo_exists():
+            self.appearance_dialog.top.lift()
+            self.appearance_dialog.top.focus_force()
+            return
+        self.appearance_dialog = AppearanceWindow(self.root, self.appearance, self._apply_appearance)
+
+    def _apply_appearance(self, prefs: dict, persist: bool) -> None:
+        self.appearance = dict(prefs)
+        self.palette = build_palette(self.appearance)
+        try:
+            self.root.attributes("-alpha", float(self.appearance.get("opacity", 0.96)))
+        except tk.TclError:
+            logging.warning("Could not update setup opacity")
+        if persist:
+            self.cfg["appearance"] = dict(self.appearance)
+            save_appearance(self.appearance)
+        self._build()
+
+    def _reset_appearance(self) -> None:
+        self._apply_appearance(load_appearance({"appearance": dict(APPEARANCE_DEFAULTS)}), True)
 
     def _refresh_devices(self) -> None:
         try:
@@ -1544,21 +1944,27 @@ class SetupWindow:
         except Exception as exc:
             logging.exception("Could not enumerate input devices")
             self.devices = []
-            self.status.config(text=f"Could not read microphones: {exc}")
-        names = ["[AUTO] Headset microphone first, then Windows default"] + [device.display_name for device in self.devices]
+            self._set_status(f"Could not read microphones: {exc}")
+        names = [f"[AUTO] Headset microphone first, then {self.platform_name} default"] + [device.display_name for device in self.devices]
+        try:
+            if not hasattr(self, "device_box") or not self.device_box.winfo_exists():
+                return
+        except tk.TclError:
+            return
         self.device_box.configure(values=names)
         if self.devices:
             position = 0
             if self.cfg.get("device_mode") == "manual":
                 position = choose_default_position(self.devices, self.cfg.get("device_index"))
-            self.device_box.current(position)
-            self.status.config(text="")
+            if not self.device_var.get() or self.device_var.get() not in names:
+                self.device_box.current(position)
+            self._set_status("")
         else:
-            self.device.set("")
-            self.status.config(text="No microphone inputs found")
+            self.device_var.set("")
+            self._set_status("No microphone inputs found")
 
     def _selected_device(self) -> Optional[DeviceInfo]:
-        selection = self.device.get().strip()
+        selection = self.device_var.get().strip()
         if not selection:
             raise RuntimeError("Select a microphone")
         if selection.startswith("[AUTO]"):
@@ -1570,69 +1976,66 @@ class SetupWindow:
         raise RuntimeError("Selected microphone disappeared. Press REFRESH and select it again.")
 
     def _start(self) -> None:
-        key = self.key.get().strip()
+        key = self.key_var.get().strip()
         if not key:
-            self.status.config(text="Enter your OpenAI API key")
+            self._set_status("Enter your OpenAI API key")
             return
 
-        source_mode = AUDIO_SOURCE_OPTIONS.get(self.audio_source.get(), "system")
+        source_mode = AUDIO_SOURCE_OPTIONS.get(self.audio_source_var.get(), "system")
         auto_mode = True
         actual_device: Optional[DeviceInfo] = None
         try:
             if source_mode == "system":
-                self.status.config(text="Checking Windows system audio loopback…", fg=AMBER)
+                self._set_status("Checking BlackHole system-audio input…" if self.is_macos else "Checking Windows system audio loopback…", self.palette.amber)
                 self.root.update_idletasks()
                 audio_input = find_system_audio_input_config()
-                self.status.config(text=f"Using: {audio_input.device_name}", fg=GREEN)
-                if self.play_audio.get():
-                    self.play_audio.set(False)
+                self._set_status(f"Using: {audio_input.device_name}", self.palette.green)
+                if self.play_audio_var.get():
+                    self.play_audio_var.set(False)
                     logging.info("Disabled translated voice playback in system-audio mode to avoid loopback feedback")
             else:
                 selected = self._selected_device()
                 auto_mode = selected is None
-                prefer_headset = auto_mode and self.auto_switch_headset.get()
-                self.status.config(text="Checking Windows microphone inputs…", fg=AMBER)
+                prefer_headset = auto_mode and self.auto_switch_headset_var.get()
+                self._set_status(f"Checking {self.platform_name} microphone inputs…", self.palette.amber)
                 self.root.update_idletasks()
-                audio_input, actual_device, used_fallback = find_best_supported_input_config(
-                    self.devices, selected, prefer_headset=prefer_headset
-                )
+                audio_input, actual_device, used_fallback = find_best_supported_input_config(self.devices, selected, prefer_headset=prefer_headset)
                 if used_fallback:
-                    self.status.config(
-                        text=f"Selected driver duplicate could not open. Using: {actual_device.display_name}",
-                        fg=GREEN,
-                    )
+                    self._set_status(f"Selected driver duplicate could not open. Using: {actual_device.display_name}", self.palette.green)
                 else:
-                    self.status.config(text=f"Using: {actual_device.display_name}", fg=GREEN)
+                    self._set_status(f"Using: {actual_device.display_name}", self.palette.green)
             self.root.update_idletasks()
         except Exception as exc:
             logging.exception("Audio source preflight failed")
-            self.status.config(text=str(exc), fg=RED)
+            self._set_status(str(exc), self.palette.red)
             messagebox.showerror("Audio source could not start", f"{exc}\n\nDebug log:\n{LOG_PATH}")
             return
 
         try:
-            self.status.config(text="Checking OpenAI Realtime API…", fg=AMBER)
+            self._set_status("Checking OpenAI Realtime API…", self.palette.amber)
             self.root.update_idletasks()
-            probe_openai_realtime(key, LANGUAGES[self.lang.get()])
-            self.status.config(text=f"Ready · using: {audio_input.device_name}", fg=GREEN)
+            probe_openai_realtime(key, LANGUAGES[self.lang_var.get()])
+            self._set_status(f"Ready · using: {audio_input.device_name}", self.palette.green)
             self.root.update_idletasks()
         except Exception as exc:
             logging.exception("OpenAI preflight rejected start")
-            self.status.config(text=str(exc), fg=RED)
+            self._set_status(str(exc), self.palette.red)
             messagebox.showerror("OpenAI connection could not start", f"{exc}\n\nDebug log:\n{LOG_PATH}")
             return
 
         config = dict(self.cfg)
         config.update({
-            "remember_key": self.remember.get(),
-            "language_label": self.lang.get(),
-            "audio_source_label": self.audio_source.get(),
+            "remember_key": self.remember_var.get(),
+            "language_label": self.lang_var.get(),
+            "audio_source_label": self.audio_source_var.get(),
             "device_index": actual_device.index if actual_device is not None else self.cfg.get("device_index"),
             "device_mode": "auto" if auto_mode else "manual",
-            "auto_switch_headset": self.auto_switch_headset.get(),
-            "play_audio": self.play_audio.get(),
+            "auto_switch_headset": self.auto_switch_headset_var.get(),
+            "play_audio": self.play_audio_var.get(),
+            "setup_advanced": self.setup_advanced_var.get(),
+            "appearance": dict(self.appearance),
         })
-        if self.remember.get():
+        if self.remember_var.get():
             config["openai_key"] = key
         else:
             config.pop("openai_key", None)
@@ -1643,44 +2046,54 @@ class SetupWindow:
 
         self.on_start(
             key,
-            LANGUAGES[self.lang.get()],
+            LANGUAGES[self.lang_var.get()],
             audio_input,
-            self.play_audio.get(),
-            source_mode == "microphone" and auto_mode and self.auto_switch_headset.get(),
+            self.play_audio_var.get(),
+            source_mode == "microphone" and auto_mode and self.auto_switch_headset_var.get(),
             source_mode,
         )
 
 
 class AppearanceWindow:
-    """Small live UI studio for the subtitle overlay."""
+    """Live appearance editor used by both setup and subtitle overlay windows."""
 
     def __init__(self, parent: tk.Tk, current: dict, on_apply: Callable[[dict, bool], None]) -> None:
         self.parent = parent
         self.on_apply = on_apply
+        self.original = dict(current)
         self.current = dict(current)
+        self.preview_after_id: Optional[str] = None
         self.top = tk.Toplevel(parent)
         self.top.title("Timur Translator · Appearance")
-        self.top.geometry("540x720")
-        self.top.minsize(500, 650)
-        self.top.configure(bg=BG)
+        self.top.geometry("610x820")
+        self.top.minsize(560, 720)
+        self.top.configure(bg=build_palette(self.current).bg)
         self.top.transient(parent)
-        self.top.protocol("WM_DELETE_WINDOW", self.top.destroy)
+        self.top.protocol("WM_DELETE_WINDOW", self._cancel)
         self._build()
         self.top.lift()
         self.top.focus_force()
 
     def _build(self) -> None:
-        tk.Frame(self.top, bg=ACCENT, height=3).pack(fill="x")
-        outer = tk.Frame(self.top, bg=BG, padx=24, pady=18)
+        palette = build_palette(self.current)
+        self.palette = palette
+        tk.Frame(self.top, bg=palette.accent, height=4).pack(fill="x")
+        outer = tk.Frame(self.top, bg=palette.bg, padx=24, pady=18)
         outer.pack(fill="both", expand=True)
-        tk.Label(outer, text="APPEARANCE STUDIO", font=(FONT, 16, "bold"), bg=BG, fg=TEXT).pack(anchor="w")
+        tk.Label(outer, text="Appearance Studio", font=(FONT, 18, "bold"), bg=palette.bg, fg=palette.text).pack(anchor="w")
         tk.Label(
-            outer, text="Tune the translator into a desktop overlay. Changes can be previewed live.",
-            font=(FONT, 10), bg=BG, fg=TEXT2, justify="left", wraplength=470,
-        ).pack(anchor="w", pady=(3, 15))
+            outer,
+            text="Adjust the setup screen and the subtitle overlay. Every change is previewed immediately.",
+            font=(FONT, 10),
+            bg=palette.bg,
+            fg=palette.text2,
+            justify="left",
+            wraplength=540,
+        ).pack(anchor="w", pady=(3, 14))
 
         self.theme = tk.StringVar(value=str(self.current.get("theme", "Midnight Violet")))
         self.opacity = tk.DoubleVar(value=float(self.current.get("opacity", 0.96)) * 100)
+        self.setup_scale = tk.DoubleVar(value=float(self.current.get("setup_scale", 1.0)) * 100)
         self.original_font = tk.IntVar(value=int(self.current.get("original_font_size", 14)))
         self.translation_font = tk.IntVar(value=int(self.current.get("translation_font_size", 18)))
         self.padding = tk.IntVar(value=int(self.current.get("text_padding", 16)))
@@ -1689,93 +2102,120 @@ class AppearanceWindow:
         self.show_diagnostics = tk.BooleanVar(value=bool(self.current.get("show_diagnostics", False)))
         self.compact = tk.BooleanVar(value=bool(self.current.get("compact_overlay", False)))
         self.transparent_canvas = tk.BooleanVar(value=bool(self.current.get("transparent_canvas", False)))
-        self.background = tk.StringVar(value=str(self.current.get("background", BG)))
-        self.accent = tk.StringVar(value=str(self.current.get("accent", ACCENT)))
+        self.background = tk.StringVar(value=str(self.current.get("background", palette.bg)))
+        self.accent = tk.StringVar(value=str(self.current.get("accent", palette.accent)))
 
-        self._section(outer, "PRESET")
-        combo = ttk.Combobox(outer, textvariable=self.theme, values=list(THEME_PRESETS), state="readonly", font=(FONT, 11))
+        self._section(outer, "Theme preset")
+        self.style = ttk.Style(self.top)
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self.style.configure("Appearance.TCombobox", fieldbackground=palette.surface2, background=palette.surface2, foreground=palette.text, arrowcolor=palette.text2, padding=7)
+        combo = ttk.Combobox(outer, textvariable=self.theme, values=list(THEME_PRESETS), state="readonly", font=(FONT, 11), style="Appearance.TCombobox")
         combo.pack(fill="x", ipady=4)
         combo.bind("<<ComboboxSelected>>", self._preset_selected)
 
-        self._section(outer, "WINDOW OPACITY")
-        self.opacity_value = tk.Label(outer, text="", font=(FONT, 10, "bold"), bg=BG, fg=TEXT2)
-        self.opacity_value.pack(anchor="e")
-        tk.Scale(
-            outer, from_=45, to=100, orient="horizontal", variable=self.opacity, resolution=1,
-            showvalue=False, bg=BG, fg=TEXT2, troughcolor=SURFACE2, highlightthickness=0,
-            activebackground=ACCENT, command=lambda _value: self._update_labels(),
-        ).pack(fill="x")
+        preview = tk.Frame(outer, bg=palette.surface, highlightthickness=1, highlightbackground=palette.border, padx=14, pady=12)
+        preview.pack(fill="x", pady=(12, 4))
+        self.preview_title = tk.Label(preview, text="Live preview · Timur Translator", font=(FONT, 13, "bold"), bg=palette.surface, fg=palette.text)
+        self.preview_title.pack(anchor="w")
+        self.preview_line = tk.Label(preview, text="Your translated subtitle will look like this.", font=(FONT, 11), bg=palette.surface, fg=palette.accent)
+        self.preview_line.pack(anchor="w", pady=(5, 0))
 
-        self._section(outer, "SUBTITLE TYPOGRAPHY")
-        grid = tk.Frame(outer, bg=BG)
-        grid.pack(fill="x")
-        self._scale_row(grid, 0, "Translation size", self.translation_font, 12, 38)
-        self._scale_row(grid, 1, "Original size", self.original_font, 10, 28)
-        self._scale_row(grid, 2, "Text padding", self.padding, 6, 36)
+        self._section(outer, "Window and setup")
+        self.opacity_label = self._scale_row(outer, "Window opacity", self.opacity, 45, 100, "%")
+        self.setup_scale_label = self._scale_row(outer, "Setup UI scale", self.setup_scale, 85, 130, "%")
 
-        self._section(outer, "COLORS")
-        color_grid = tk.Frame(outer, bg=BG)
-        color_grid.pack(fill="x")
-        self._color_row(color_grid, 0, "Background", self.background)
-        self._color_row(color_grid, 1, "Accent", self.accent)
+        self._section(outer, "Subtitle typography")
+        self._scale_row(outer, "Translation size", self.translation_font, 12, 38, " px")
+        self._scale_row(outer, "Original size", self.original_font, 10, 28, " px")
+        self._scale_row(outer, "Text padding", self.padding, 6, 36, " px")
 
-        self._section(outer, "OVERLAY BEHAVIOR")
-        self._check(outer, "Always keep translator above other windows", self.always_top)
-        self._check(outer, "Compact overlay: translation only", self.compact)
-        self._check(outer, "Transparent subtitle canvas, keep text opaque", self.transparent_canvas)
-        self._check(outer, "Show original microphone transcript", self.show_original)
-        self._check(outer, "Diagnostic mode: show technical STREAM counters", self.show_diagnostics)
+        self._section(outer, "Colors")
+        self._color_row(outer, "Background", self.background)
+        self._color_row(outer, "Accent", self.accent)
 
-        actions = tk.Frame(outer, bg=BG)
-        actions.pack(fill="x", side="bottom", pady=(18, 0))
-        self._button(actions, "RESET", self._reset, bg=SURFACE2, fg=TEXT2).pack(side="left")
-        self._button(actions, "PREVIEW", lambda: self._submit(False), bg=SURFACE2, fg=TEXT).pack(side="right", padx=(8, 0))
-        self._button(actions, "SAVE & APPLY", lambda: self._submit(True), bg=ACCENT, fg="white").pack(side="right")
-        self._update_labels()
+        self._section(outer, "Overlay behavior")
+        self._switch_row(outer, "Always keep translator above other windows", self.always_top)
+        self._switch_row(outer, "Compact overlay: translation only", self.compact)
+        self._switch_row(outer, "Transparent subtitle canvas", self.transparent_canvas)
+        self._switch_row(outer, "Show original microphone transcript", self.show_original)
+        self._switch_row(outer, "Diagnostic mode: show STREAM counters", self.show_diagnostics)
+
+        actions = tk.Frame(outer, bg=palette.bg)
+        actions.pack(fill="x", side="bottom", pady=(16, 0))
+        self._button(actions, "RESET", self._reset, palette.surface2, palette.text2).pack(side="left")
+        self._button(actions, "CANCEL", self._cancel, palette.surface2, palette.text).pack(side="right", padx=(8, 0))
+        self._button(actions, "SAVE & APPLY", self._save, palette.accent, "white").pack(side="right")
+        self._refresh_preview()
 
     def _section(self, parent: tk.Widget, text: str) -> None:
-        tk.Label(parent, text=text, font=(FONT, 9, "bold"), bg=BG, fg=TEXT3, anchor="w").pack(fill="x", pady=(13, 5))
+        tk.Label(parent, text=text, font=(FONT, 9, "bold"), bg=parent.cget("bg"), fg=self.palette.text3, anchor="w").pack(fill="x", pady=(12, 5))
 
-    def _scale_row(self, parent: tk.Frame, row: int, label: str, variable: tk.IntVar, start: int, end: int) -> None:
-        tk.Label(parent, text=label, font=(FONT, 10), bg=BG, fg=TEXT2, anchor="w").grid(row=row, column=0, sticky="w", pady=2)
-        tk.Scale(
-            parent, from_=start, to=end, orient="horizontal", variable=variable, resolution=1,
-            showvalue=True, length=250, bg=BG, fg=TEXT2, troughcolor=SURFACE2,
-            highlightthickness=0, activebackground=ACCENT,
-        ).grid(row=row, column=1, sticky="ew")
-        parent.grid_columnconfigure(1, weight=1)
+    def _scale_row(self, parent: tk.Widget, title: str, variable: tk.Variable, start: int, end: int, suffix: str) -> tk.Label:
+        row = tk.Frame(parent, bg=parent.cget("bg"))
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text=title, font=(FONT, 10), bg=parent.cget("bg"), fg=self.palette.text2, width=18, anchor="w").pack(side="left")
+        value_label = tk.Label(row, text="", font=(FONT, 9, "bold"), bg=parent.cget("bg"), fg=self.palette.text2, width=7, anchor="e")
+        value_label.pack(side="right")
+        scale = tk.Scale(
+            row,
+            from_=start,
+            to=end,
+            orient="horizontal",
+            variable=variable,
+            resolution=1,
+            showvalue=False,
+            bg=parent.cget("bg"),
+            fg=self.palette.text2,
+            troughcolor=self.palette.surface2,
+            highlightthickness=0,
+            activebackground=self.palette.accent,
+            command=lambda _value: self._scale_changed(value_label, variable, suffix),
+        )
+        scale.pack(side="left", fill="x", expand=True, padx=(8, 4))
+        self._scale_changed(value_label, variable, suffix)
+        return value_label
 
-    def _color_row(self, parent: tk.Frame, row: int, label: str, variable: tk.StringVar) -> None:
-        tk.Label(parent, text=label, font=(FONT, 10), bg=BG, fg=TEXT2, anchor="w").grid(row=row, column=0, sticky="w", pady=3)
-        tk.Entry(parent, textvariable=variable, font=(FONT, 10), bg=SURFACE2, fg=TEXT, insertbackground=TEXT, relief="flat").grid(row=row, column=1, sticky="ew", padx=8)
-        self._button(parent, "PICK", lambda: self._pick_color(variable), bg=SURFACE2, fg=TEXT2).grid(row=row, column=2)
-        parent.grid_columnconfigure(1, weight=1)
+    def _scale_changed(self, label: tk.Label, variable: tk.Variable, suffix: str) -> None:
+        try:
+            label.configure(text=f"{int(round(float(variable.get())))}{suffix}")
+        except (TypeError, ValueError, tk.TclError):
+            pass
+        self._schedule_preview()
 
-    def _check(self, parent: tk.Widget, text: str, variable: tk.BooleanVar) -> None:
-        tk.Checkbutton(
-            parent, text=text, variable=variable, font=(FONT, 10), bg=BG, fg=TEXT2,
-            activebackground=BG, activeforeground=TEXT, selectcolor=SURFACE2,
-        ).pack(anchor="w", pady=2)
+    def _color_row(self, parent: tk.Widget, title: str, variable: tk.StringVar) -> None:
+        row = tk.Frame(parent, bg=parent.cget("bg"))
+        row.pack(fill="x", pady=3)
+        tk.Label(row, text=title, font=(FONT, 10), bg=parent.cget("bg"), fg=self.palette.text2, width=18, anchor="w").pack(side="left")
+        tk.Entry(row, textvariable=variable, font=(FONT, 10), bg=self.palette.surface2, fg=self.palette.text, insertbackground=self.palette.text, relief="flat", bd=0).pack(side="left", fill="x", expand=True, ipady=5, padx=(8, 8))
+        self._button(row, "PICK", lambda: self._pick_color(variable), self.palette.surface2, self.palette.text2).pack(side="right")
+        variable.trace_add("write", lambda *_args: self._schedule_preview())
+
+    def _switch_row(self, parent: tk.Widget, title: str, variable: tk.BooleanVar) -> None:
+        row = tk.Frame(parent, bg=parent.cget("bg"))
+        row.pack(fill="x", pady=3)
+        tk.Label(row, text=title, font=(FONT, 10), bg=parent.cget("bg"), fg=self.palette.text2, anchor="w").pack(side="left", fill="x", expand=True)
+        ToggleSwitch(row, variable, on_color=self.palette.accent, off_color=self.palette.border, command=self._schedule_preview).pack(side="right")
 
     @staticmethod
     def _button(parent: tk.Widget, text: str, command: Callable[[], None], bg: str, fg: str) -> tk.Button:
-        button = tk.Button(parent, text=text, font=(FONT, 9, "bold"), bg=bg, fg=fg, relief="flat", padx=12, pady=7, command=command)
-        return button
-
-    def _update_labels(self) -> None:
-        self.opacity_value.config(text=f"{int(round(self.opacity.get()))}%")
+        return tk.Button(parent, text=text, font=(FONT, 9, "bold"), bg=bg, fg=fg, activebackground=bg, activeforeground=fg, relief="flat", bd=0, padx=12, pady=7, cursor="hand2", command=command)
 
     def _preset_selected(self, _event: object = None) -> None:
         preset = THEME_PRESETS.get(self.theme.get())
         if preset and self.theme.get() != "Custom":
             self.background.set(preset["background"])
             self.accent.set(preset["accent"])
+        self._schedule_preview()
 
     def _pick_color(self, variable: tk.StringVar) -> None:
         _rgb, chosen = colorchooser.askcolor(color=variable.get(), parent=self.top)
         if chosen:
             variable.set(chosen)
             self.theme.set("Custom")
+            self._schedule_preview()
 
     def _payload(self) -> dict:
         payload = dict(self.current)
@@ -1783,32 +2223,63 @@ class AppearanceWindow:
             "theme": self.theme.get(),
             "background": _safe_hex(self.background.get(), BG),
             "accent": _safe_hex(self.accent.get(), ACCENT),
-            "opacity": round(self.opacity.get() / 100.0, 2),
+            "opacity": round(float(self.opacity.get()) / 100.0, 2),
+            "setup_scale": round(float(self.setup_scale.get()) / 100.0, 2),
             "always_on_top": self.always_top.get(),
             "show_original": self.show_original.get(),
             "show_diagnostics": self.show_diagnostics.get(),
             "compact_overlay": self.compact.get(),
             "transparent_canvas": self.transparent_canvas.get(),
-            "original_font_size": self.original_font.get(),
-            "translation_font_size": self.translation_font.get(),
-            "text_padding": self.padding.get(),
+            "original_font_size": int(self.original_font.get()),
+            "translation_font_size": int(self.translation_font.get()),
+            "text_padding": int(self.padding.get()),
         })
         return load_appearance({"appearance": payload})
 
-    def _submit(self, persist: bool) -> None:
+    def _schedule_preview(self) -> None:
+        if not self.top.winfo_exists():
+            return
+        if self.preview_after_id:
+            try:
+                self.top.after_cancel(self.preview_after_id)
+            except tk.TclError:
+                pass
+        self.preview_after_id = self.top.after(120, self._preview)
+
+    def _preview(self) -> None:
+        self.preview_after_id = None
         payload = self._payload()
         self.current = dict(payload)
-        self.on_apply(payload, persist)
-        if persist:
-            self.top.destroy()
+        self._refresh_preview()
+        self.on_apply(payload, False)
+
+    def _refresh_preview(self) -> None:
+        if not hasattr(self, "preview_line"):
+            return
+        payload = self._payload() if hasattr(self, "theme") else self.current
+        palette = build_palette(payload)
+        self.preview_title.configure(bg=palette.surface, fg=palette.text)
+        self.preview_line.configure(bg=palette.surface, fg=palette.accent, font=(FONT, int(payload.get("translation_font_size", 18))))
+        self.preview_title.master.configure(bg=palette.surface, highlightbackground=palette.border)
+
+    def _save(self) -> None:
+        payload = self._payload()
+        self.current = dict(payload)
+        self.on_apply(payload, True)
+        self.top.destroy()
+
+    def _cancel(self) -> None:
+        self.on_apply(self.original, False)
+        self.top.destroy()
 
     def _reset(self) -> None:
-        defaults = dict(APPEARANCE_DEFAULTS)
-        self.current = defaults
+        defaults = load_appearance({"appearance": dict(APPEARANCE_DEFAULTS)})
+        self.current = dict(defaults)
         self.theme.set(defaults["theme"])
         self.background.set(defaults["background"])
         self.accent.set(defaults["accent"])
         self.opacity.set(defaults["opacity"] * 100)
+        self.setup_scale.set(defaults["setup_scale"] * 100)
         self.original_font.set(defaults["original_font_size"])
         self.translation_font.set(defaults["translation_font_size"])
         self.padding.set(defaults["text_padding"])
@@ -1817,8 +2288,7 @@ class AppearanceWindow:
         self.show_diagnostics.set(defaults["show_diagnostics"])
         self.compact.set(defaults["compact_overlay"])
         self.transparent_canvas.set(defaults["transparent_canvas"])
-        self._update_labels()
-        self.on_apply(load_appearance({"appearance": defaults}), False)
+        self._schedule_preview()
 
 
 class TranslatorWindow:

@@ -50,3 +50,7 @@ macos/install_blackhole_macos.command
 ## Security
 
 Never commit an OpenAI API key. Each user enters their own key locally in the app.
+
+## v16 setup customization
+
+The setup screen now supports Basic and Advanced modes, quick theme presets, custom colors, opacity, and setup UI scaling. Open `APPEARANCE` from the setup screen to preview changes live before saving.

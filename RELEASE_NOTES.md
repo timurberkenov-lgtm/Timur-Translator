@@ -21,3 +21,13 @@ Desktop subtitle translator for Windows and macOS.
 - The API key is not bundled into release files.
 - macOS system audio requires BlackHole 2ch and a Multi-Output Device.
 - Unsigned macOS builds may require right-clicking the app and selecting **Open** on first launch.
+
+## v16.0.0 · Setup UI redesign
+
+- Replaced the legacy setup form with a cleaner card-based screen on Windows and macOS.
+- Added Basic and Advanced setup modes.
+- Added custom visual toggle switches instead of legacy checkboxes.
+- Added quick theme presets directly on the setup screen.
+- Added a live Appearance Studio preview for background, accent, opacity and setup UI scale.
+- Added configurable setup UI scaling from 85% to 130%.
+- Kept the existing realtime translation, microphone and system-audio capture pipeline unchanged.

@@ -1,4 +1,1 @@
-Timur Translator Realtime Desktop v14
-macOS release source.
-Build with GitHub Actions or build_macos_local.command.
-Includes microphone mode, BlackHole system-audio mode, customizable UI, overlay mode, and Turkish (Türkçe → tr).
+16.0.0

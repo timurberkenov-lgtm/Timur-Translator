@@ -1,4 +1,1 @@
-Timur Translator Realtime Desktop v14
-Windows x64 release source.
-Build with GitHub Actions or build_windows_local.bat.
-Includes microphone mode, Windows WASAPI loopback system-audio mode, customizable UI, overlay mode, and Turkish (Türkçe → tr).
+16.0.0
