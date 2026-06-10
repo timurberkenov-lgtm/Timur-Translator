@@ -1,4 +1,0 @@
-websocket-client>=1.8.0
-PyAudio>=0.2.14
-SoundCard>=0.4.6
-numpy>=2.0.0
