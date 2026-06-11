@@ -39,6 +39,7 @@ iconutil -c icns assets/TimurTranslator.iconset -o assets/TimurTranslator.icns
   --hidden-import websocket \
   --hidden-import pyaudio \
   --collect-submodules websocket \
+  --collect-data certifi \
   macos/timur_translator.py
 
 APP="dist/Timur Translator Realtime.app"

@@ -41,6 +41,7 @@ mkdir release
   --hidden-import websocket ^
   --hidden-import pyaudio ^
   --collect-submodules websocket ^
+  --collect-data certifi ^
   --collect-all soundcard ^
   windows\timur_translator.py
 if errorlevel 1 goto :fail

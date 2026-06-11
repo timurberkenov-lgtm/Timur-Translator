@@ -89,3 +89,13 @@ assert ordered[0].index == 2
 assert module.choose_default_position(devices, 3) == 0
 
 print(f"Verified {platform_folder}: syntax, Tk spacing, secrets, PCM16 pipeline, session payload and headset priority")
+
+# TLS CA bundle is explicitly configured for packaged desktop apps.
+ssl_options = module.websocket_ssl_options()
+assert ssl_options["cert_reqs"] is not None
+assert ssl_options["check_hostname"] is True
+assert "ca_certs" in ssl_options
+assert Path(ssl_options["ca_certs"]).is_file()
+assert "sslopt=websocket_ssl_options()" in source_text
+
+print(f"Verified {platform_folder}: packaged TLS CA bundle")

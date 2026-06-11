@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import queue
+import ssl
 import sys
 import threading
 import time
@@ -807,6 +808,42 @@ def build_session_update_event(
     }
 
 
+_CA_BUNDLE_PATH: Optional[str] = None
+
+
+def _ca_bundle_path() -> Optional[str]:
+    """Return a trusted CA bundle that also works inside PyInstaller apps.
+
+    macOS app bundles created by PyInstaller do not always inherit a usable
+    Python CA path. certifi ships a Mozilla CA bundle and PyInstaller's
+    certifi hook places it inside the app when collected during packaging.
+    """
+    global _CA_BUNDLE_PATH
+    if _CA_BUNDLE_PATH:
+        return _CA_BUNDLE_PATH
+    try:
+        import certifi
+        candidate = certifi.where()
+        if candidate and Path(candidate).is_file():
+            _CA_BUNDLE_PATH = str(candidate)
+            os.environ.setdefault("SSL_CERT_FILE", _CA_BUNDLE_PATH)
+            os.environ.setdefault("WEBSOCKET_CLIENT_CA_BUNDLE", _CA_BUNDLE_PATH)
+            logging.info("TLS CA bundle: %s", _CA_BUNDLE_PATH)
+            return _CA_BUNDLE_PATH
+        logging.warning("certifi CA bundle path does not exist: %r", candidate)
+    except Exception:
+        logging.exception("Could not load certifi CA bundle")
+    return None
+
+
+def websocket_ssl_options() -> dict:
+    ca_bundle = _ca_bundle_path()
+    options = {"cert_reqs": ssl.CERT_REQUIRED, "check_hostname": True}
+    if ca_bundle:
+        options["ca_certs"] = ca_bundle
+    return options
+
+
 def _websocket_error_text(exc: Exception) -> str:
     status_code = getattr(exc, "status_code", None)
     response_body = getattr(exc, "resp_body", None) or getattr(exc, "response_body", None)
@@ -840,6 +877,7 @@ def probe_openai_realtime(api_key: str, target_language: str) -> None:
                 f"OpenAI-Safety-Identifier: {stable_safety_id()}",
             ],
             timeout=API_PREFLIGHT_TIMEOUT_SECONDS,
+            sslopt=websocket_ssl_options(),
         )
         logging.info("API preflight: WebSocket handshake completed")
         ws.send(json.dumps(build_session_update_event(target_language)))
@@ -1269,6 +1307,7 @@ class RealtimeTranslationClient:
                 f"OpenAI-Safety-Identifier: {stable_safety_id()}",
             ],
             timeout=10,
+            sslopt=websocket_ssl_options(),
         )
         with self.ws_lock:
             self.ws = ws
