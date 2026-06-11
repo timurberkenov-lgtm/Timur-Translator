@@ -1878,8 +1878,22 @@ class SetupWindow:
 
         actions = tk.Frame(header, bg=self.palette.bg)
         actions.pack(side="right", anchor="n")
-        self._button(actions, "APPEARANCE", self._open_appearance, bg=self.palette.surface2, fg=self.palette.text, pady=self._s(8)).pack(side="left", padx=(0, self._s(8)))
-        self._button(actions, "RESET STYLE", self._reset_appearance, bg=self.palette.surface2, fg=self.palette.text2, pady=self._s(8)).pack(side="left")
+        self._label_button(
+            actions,
+            "APPEARANCE",
+            self._open_appearance,
+            bg=self.palette.accent,
+            fg=_text_on_color(self.palette.accent),
+            pady=self._s(8),
+        ).pack(side="left", padx=(0, self._s(8)))
+        self._label_button(
+            actions,
+            "RESET STYLE",
+            self._reset_appearance,
+            bg=self.palette.surface2,
+            fg=_text_on_color(self.palette.surface2),
+            pady=self._s(8),
+        ).pack(side="left")
 
         mode_bar = tk.Frame(parent, bg=self.palette.bg)
         mode_bar.pack(fill="x", pady=(self._s(3), self._s(12)))
@@ -2023,6 +2037,35 @@ class SetupWindow:
         tk.Label(text_box, text=description, font=self._font(8), bg=parent.cget("bg"), fg=self.palette.text3, anchor="w", justify="left", wraplength=self._s(560)).pack(anchor="w", pady=(self._s(2), 0))
         ToggleSwitch(row, variable, on_color=self.palette.accent, off_color=self.palette.border, command=self._source_switch_changed if variable is self.play_audio_var else None).pack(side="right", padx=(self._s(10), 0))
         return row
+
+    def _label_button(
+        self, parent: tk.Widget, text: str, command: Callable[[], None], bg: str, fg: str,
+        pady: int = 9, font: Optional[tuple] = None,
+    ) -> tk.Label:
+        """Custom action chip. tk.Button can be recolored by macOS Aqua, while Label keeps exact colors."""
+        normal_bg = bg
+        hover_bg = _blend_hex(bg, "#ffffff" if not _is_light(bg) else "#000000", 0.10)
+        normal_fg = fg
+        hover_fg = _text_on_color(hover_bg)
+        chip = tk.Label(
+            parent,
+            text=text,
+            font=font or (FONT, 10, "bold"),
+            bg=normal_bg,
+            fg=normal_fg,
+            padx=12,
+            pady=pady,
+            cursor="hand2",
+            highlightthickness=1,
+            highlightbackground=self.palette.border,
+            takefocus=True,
+        )
+        chip.bind("<Enter>", lambda _event: chip.configure(bg=hover_bg, fg=hover_fg))
+        chip.bind("<Leave>", lambda _event: chip.configure(bg=normal_bg, fg=normal_fg))
+        chip.bind("<Button-1>", lambda _event: command())
+        chip.bind("<Return>", lambda _event: command())
+        chip.bind("<space>", lambda _event: command())
+        return chip
 
     @staticmethod
     def _button(parent: tk.Widget, text: str, command: Callable[[], None], bg: str, fg: str, pady: int = 9, font: Optional[tuple] = None) -> tk.Button:

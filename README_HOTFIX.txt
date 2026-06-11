@@ -1,4 +1,4 @@
-Timur Translator v16.3.1 contrast hotfix
+Timur Translator v16.3.2 macOS APPEARANCE button hotfix
 
 Upload the CONTENTS of this folder to the root of your GitHub repository.
 Replace existing files when GitHub asks.
@@ -10,5 +10,5 @@ Included:
 - macos/VERSION.txt
 - RELEASE_NOTES.md
 
-This hotfix improves text contrast on accent-colored buttons and pills,
-especially on macOS themes like Ocean Glass.
+This update replaces the top APPEARANCE and RESET STYLE tk.Button controls
+with custom clickable labels so macOS Aqua cannot repaint them with unreadable colors.
