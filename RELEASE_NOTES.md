@@ -1,15 +1,10 @@
-# Timur Translator Realtime v16.3
+# Timur Translator Realtime v16.3.1
 
-Verified stability release:
-- Fixed setup startup crash caused by invalid Tkinter spacing.
-- Pinned `START LIVE TRANSLATION` to the bottom of the setup window.
-- Added scrollable setup cards for smaller screens and large UI-scale values.
-- Kept the setup form fully opaque and readable while preserving configurable subtitle-overlay opacity.
-- Added adaptive setup geometry for smaller Windows and macOS displays.
-- Safely cancels pending Appearance Studio preview callbacks when closing the editor.
-- Hardened delayed subtitle UI callbacks during shutdown and return-to-setup flows.
-- Fixed GitHub Release attachment workflow with repository checkout and explicit `GH_REPO`.
-- Added pre-package source verification in GitHub Actions and local builders.
+UI contrast hotfix:
+- Improved text contrast on accent-colored buttons and pills, especially on macOS.
+- Fixed low-contrast labels for `APPEARANCE`, `BASIC` / `ADVANCED`, `START LIVE TRANSLATION`, and other accent actions.
+- Accent-colored controls now choose dark or light text automatically based on actual contrast.
+- Applied the same contrast fix to both Windows and macOS builds for consistency.
 
 ## Existing features
 

@@ -158,6 +158,26 @@ def _is_light(value: str) -> bool:
     return (0.2126 * red + 0.7152 * green + 0.0722 * blue) > 168
 
 
+def _relative_luminance(value: str) -> float:
+    red, green, blue = _hex_to_rgb(value)
+    def _channel(channel: int) -> float:
+        component = channel / 255.0
+        return component / 12.92 if component <= 0.03928 else ((component + 0.055) / 1.055) ** 2.4
+    r, g, b = _channel(red), _channel(green), _channel(blue)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast_ratio(first: str, second: str) -> float:
+    a = _relative_luminance(first)
+    b = _relative_luminance(second)
+    lighter, darker = (a, b) if a >= b else (b, a)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _text_on_color(background: str, light: str = "#ffffff", dark: str = "#09131f") -> str:
+    return light if _contrast_ratio(background, light) >= _contrast_ratio(background, dark) else dark
+
+
 @dataclass(frozen=True)
 class Palette:
     bg: str
@@ -1657,7 +1677,7 @@ class SetupWindow:
             "START LIVE TRANSLATION",
             self._start,
             bg=self.palette.accent,
-            fg="white",
+            fg=_text_on_color(self.palette.accent),
             pady=self._s(15),
             font=self._font(13, "bold"),
         ).pack(fill="x")
@@ -1785,9 +1805,9 @@ class SetupWindow:
                 text=name,
                 font=self._font(8, "bold" if selected else None),
                 bg=preset["accent"] if selected else self.palette.surface2,
-                fg="white" if selected else self.palette.text2,
+                fg=_text_on_color(preset["accent"]) if selected else self.palette.text2,
                 activebackground=preset["accent"],
-                activeforeground="white",
+                activeforeground=_text_on_color(preset["accent"]),
                 relief="flat",
                 bd=0,
                 padx=self._s(9),
@@ -1912,7 +1932,7 @@ class SetupWindow:
         return tk.Button(parent, text=text, font=font or (FONT, 10, "bold"), bg=bg, fg=fg, activebackground=bg, activeforeground=fg, relief="flat", bd=0, padx=12, pady=pady, highlightthickness=0, cursor="hand2", command=command)
 
     def _pill(self, parent: tk.Widget, text: str, active: bool, command: Callable[[], None]) -> tk.Button:
-        return self._button(parent, text, command, bg=self.palette.accent if active else self.palette.surface2, fg="white" if active else self.palette.text2, pady=self._s(5), font=self._font(8, "bold"))
+        return self._button(parent, text, command, bg=self.palette.accent if active else self.palette.surface2, fg=_text_on_color(self.palette.accent) if active else self.palette.text2, pady=self._s(5), font=self._font(8, "bold"))
 
     def _set_status(self, text: str, color: Optional[str] = None) -> None:
         self.status_var.set(text)
@@ -1953,7 +1973,7 @@ class SetupWindow:
         for mode, card in self.audio_cards.items():
             active = mode == selected
             card_bg = self.palette.accent if active else self.palette.surface2
-            title_fg = "white" if active else self.palette.text
+            title_fg = _text_on_color(self.palette.accent) if active else self.palette.text
             text_fg = _blend_hex("#ffffff", self.palette.accent, 0.16) if active else self.palette.text2
             card.configure(bg=card_bg, highlightbackground=self.palette.accent if active else self.palette.border)
             for child in card.winfo_children():
@@ -2215,7 +2235,7 @@ class AppearanceWindow:
         actions.pack(fill="x", side="bottom", pady=(16, 0))
         self._button(actions, "RESET", self._reset, palette.surface2, palette.text2).pack(side="left")
         self._button(actions, "CANCEL", self._cancel, palette.surface2, palette.text).pack(side="right", padx=(8, 0))
-        self._button(actions, "SAVE & APPLY", self._save, palette.accent, "white").pack(side="right")
+        self._button(actions, "SAVE & APPLY", self._save, palette.accent, _text_on_color(palette.accent)).pack(side="right")
         self._refresh_preview()
 
     def _section(self, parent: tk.Widget, text: str) -> None:
@@ -2489,7 +2509,7 @@ class TranslatorWindow:
     def _button(self, parent: tk.Widget, text: str, command: Callable[[], None], prominent: bool = False) -> tk.Button:
         p = self.palette
         bg = p.accent if prominent else p.surface2
-        fg = "white" if prominent else p.text2
+        fg = _text_on_color(p.accent) if prominent else p.text2
         button = tk.Button(parent, text=text, font=(FONT, 9, "bold"), bg=bg, fg=fg, relief="flat", padx=11, pady=5, command=command, cursor="hand2")
         self._restyle_button(button, bg, fg)
         button.bind("<Enter>", lambda _event: button.config(bg=getattr(button, "_timur_hover_bg", bg)))
@@ -2560,7 +2580,7 @@ class TranslatorWindow:
         self.separator.config(bg=p.border)
         for button in (self.setup_button, self.style_button, self.overlay_button, self.clear_button, self.copy_button):
             self._restyle_button(button, p.surface2, p.text2)
-        self._restyle_button(self.pause_button, p.accent, "white")
+        self._restyle_button(self.pause_button, p.accent, _text_on_color(p.accent))
         compact = bool(self.appearance["compact_overlay"])
         self.overlay_button.config(text="FULL VIEW" if compact else "OVERLAY")
         self._set_packed(self.input_label, not compact, fill="x", before=self.body)
