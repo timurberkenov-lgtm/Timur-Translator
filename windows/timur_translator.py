@@ -62,7 +62,17 @@ API_PREFLIGHT_EVENT_WINDOW_SECONDS = 3.5
 BG, SURFACE, SURFACE2, BORDER = "#0a0a0f", "#13131a", "#1c1c26", "#2e2e3e"
 TEXT, TEXT2, TEXT3 = "#eeeef5", "#a1a1c0", "#666684"
 ACCENT, GREEN, AMBER, RED = "#6c63ff", "#00d4a0", "#ffb347", "#ff5e5e"
-FONT = "Helvetica"
+
+
+def _preferred_font() -> str:
+    if sys.platform == "darwin":
+        return "Avenir Next"
+    if sys.platform == "win32":
+        return "Segoe UI"
+    return "Helvetica"
+
+
+FONT = _preferred_font()
 
 LANGUAGES = {
     "Русский": "ru",
@@ -1713,7 +1723,7 @@ class SetupWindow:
         self.status_label.pack(anchor="w", pady=(0, self._s(8)))
         self._button(
             footer,
-            "START LIVE TRANSLATION",
+            "Start live translation",
             self._start,
             bg=self.palette.accent,
             fg=_text_on_color(self.palette.accent),
@@ -2521,23 +2531,29 @@ class TranslatorWindow:
         p = self.palette
         self.accent_bar = tk.Frame(self.root, bg=p.accent, height=3)
         self.accent_bar.pack(fill="x")
-        self.header = tk.Frame(self.root, bg=p.surface, padx=18, pady=10)
+        self.header = tk.Frame(self.root, bg=p.surface, padx=20, pady=12)
         self.header.pack(fill="x")
-        self.brand_label = tk.Label(self.header, text="Timur Translator", font=(FONT, 14, "bold"), bg=p.surface, fg=p.text)
-        self.brand_label.pack(side="left")
-        self.status_label = tk.Label(self.header, text="Starting…", font=(FONT, 10), bg=p.surface, fg=p.amber)
-        self.status_label.pack(side="left", padx=14)
-        self.setup_button = self._button(self.header, "SETUP", self._settings)
+        self.brand_box = tk.Frame(self.header, bg=p.surface)
+        self.brand_box.pack(side="left", fill="x", expand=True)
+        self.brand_label = tk.Label(self.brand_box, text="Timur Translator", font=(FONT, 16, "bold"), bg=p.surface, fg=p.text)
+        self.brand_label.pack(anchor="w")
+        self.brand_subtitle = tk.Label(self.brand_box, text="Realtime subtitles for calls, videos and interviews", font=(FONT, 10), bg=p.surface, fg=p.text3)
+        self.brand_subtitle.pack(anchor="w", pady=(2, 0))
+        self.status_chip = tk.Frame(self.header, bg=p.surface2, highlightthickness=1, highlightbackground=p.border, padx=10, pady=5)
+        self.status_chip.pack(side="left", padx=(12, 10))
+        self.status_label = tk.Label(self.status_chip, text="Starting…", font=(FONT, 10, "bold"), bg=p.surface2, fg=p.amber)
+        self.status_label.pack()
+        self.setup_button = self._button(self.header, "Setup", self._settings)
         self.setup_button.pack(side="right")
-        self.style_button = self._button(self.header, "STYLE", self._open_appearance)
+        self.style_button = self._button(self.header, "Appearance", self._open_appearance)
         self.style_button.pack(side="right", padx=8)
-        self.overlay_button = self._button(self.header, "OVERLAY", self._toggle_overlay)
+        self.overlay_button = self._button(self.header, "Overlay", self._toggle_overlay)
         self.overlay_button.pack(side="right")
-        self.pause_button = self._button(self.header, "PAUSE", self._toggle_pause, prominent=True)
+        self.pause_button = self._button(self.header, "Pause", self._toggle_pause, prominent=True)
         self.pause_button.pack(side="right", padx=8)
 
         self.input_label = tk.Label(
-            self.root, text=f"INPUT: {audio_input.description} → 24000 Hz mono PCM16",
+            self.root, text=f"Audio input · {audio_input.description} · 24 kHz mono PCM16",
             font=(FONT, 9), bg=p.surface2, fg=p.text3, anchor="w", padx=18, pady=4
         )
         self.input_label.pack(fill="x")
@@ -2555,7 +2571,7 @@ class TranslatorWindow:
 
         self.diagnostics = tk.Frame(self.root, bg=p.surface, padx=18, pady=5)
         self.diagnostics.pack(fill="x")
-        self.stream_title = tk.Label(self.diagnostics, text="STREAM:", font=(FONT, 9, "bold"), bg=p.surface, fg=p.text3)
+        self.stream_title = tk.Label(self.diagnostics, text="Session", font=(FONT, 9, "bold"), bg=p.surface, fg=p.text3)
         self.stream_title.pack(side="left")
         self.stats_label = tk.Label(self.diagnostics, text="mic waiting · API waiting", font=(FONT, 9), bg=p.surface, fg=p.text2, anchor="w")
         self.stats_label.pack(side="left", padx=(8, 0), fill="x", expand=True)
@@ -2564,18 +2580,18 @@ class TranslatorWindow:
         self.heads.pack(fill="x")
         self.heads.grid_columnconfigure(0, weight=1, uniform="subtitle_columns")
         self.heads.grid_columnconfigure(1, weight=1, uniform="subtitle_columns")
-        self.left_head = tk.Label(self.heads, text="ORIGINAL MICROPHONE SPEECH", font=(FONT, 10, "bold"), bg=p.surface2, fg=p.text3)
+        self.left_head = tk.Label(self.heads, text="Original speech", font=(FONT, 10, "bold"), bg=p.surface2, fg=p.text3)
         self.left_head.grid(row=0, column=0, sticky="ew")
-        self.right_head = tk.Label(self.heads, text="LIVE TRANSLATION", font=(FONT, 10, "bold"), bg=p.surface2, fg=p.text3)
+        self.right_head = tk.Label(self.heads, text="Live translation", font=(FONT, 10, "bold"), bg=p.surface2, fg=p.text3)
         self.right_head.grid(row=0, column=1, sticky="ew")
 
         self.footer = tk.Frame(self.root, bg=p.surface, padx=18, pady=7)
         self.footer.pack(side="bottom", fill="x")
-        self.count_label = tk.Label(self.footer, text="0 segments", font=(FONT, 10), bg=p.surface, fg=p.text3)
+        self.count_label = tk.Label(self.footer, text="0 segments captured", font=(FONT, 10), bg=p.surface, fg=p.text3)
         self.count_label.pack(side="left")
-        self.clear_button = self._button(self.footer, "CLEAR", self._clear)
+        self.clear_button = self._button(self.footer, "Clear", self._clear)
         self.clear_button.pack(side="right")
-        self.copy_button = self._button(self.footer, "COPY TRANSLATION", self._copy_translation)
+        self.copy_button = self._button(self.footer, "Copy translation", self._copy_translation)
         self.copy_button.pack(side="right", padx=8)
         self.error_label = tk.Label(self.footer, text="", font=(FONT, 9), bg=p.surface, fg=p.red)
         self.error_label.pack(side="right", padx=14)
@@ -2592,7 +2608,7 @@ class TranslatorWindow:
         p = self.palette
         bg = p.accent if prominent else p.surface2
         fg = _text_on_color(p.accent) if prominent else p.text2
-        button = tk.Button(parent, text=text, font=(FONT, 9, "bold"), bg=bg, fg=fg, relief="flat", padx=11, pady=5, command=command, cursor="hand2")
+        button = tk.Button(parent, text=text, font=(FONT, 9, "bold"), bg=bg, fg=fg, relief="flat", padx=13, pady=7, bd=0, highlightthickness=1, highlightbackground=_blend_hex(bg, "#ffffff" if not _is_light(bg) else "#000000", 0.18), highlightcolor=bg, command=command, cursor="hand2")
         self._restyle_button(button, bg, fg)
         button.bind("<Enter>", lambda _event: button.config(bg=getattr(button, "_timur_hover_bg", bg)))
         button.bind("<Leave>", lambda _event: button.config(bg=getattr(button, "_timur_normal_bg", bg)))
@@ -2643,7 +2659,9 @@ class TranslatorWindow:
         self.accent_bar.config(bg=p.accent)
         self.header.config(bg=p.surface)
         self.brand_label.config(bg=p.surface, fg=p.text)
-        self.status_label.config(bg=p.surface)
+        self.brand_subtitle.config(bg=p.surface, fg=p.text3)
+        self.status_chip.config(bg=p.surface2, highlightbackground=p.border)
+        self.status_label.config(bg=p.surface2)
         self.input_label.config(bg=p.surface2, fg=p.text3)
         self.helper_label.config(bg=p.surface, fg=p.text2)
         self.diagnostics.config(bg=p.surface)
@@ -2664,7 +2682,7 @@ class TranslatorWindow:
             self._restyle_button(button, p.surface2, p.text2)
         self._restyle_button(self.pause_button, p.accent, _text_on_color(p.accent))
         compact = bool(self.appearance["compact_overlay"])
-        self.overlay_button.config(text="FULL VIEW" if compact else "OVERLAY")
+        self.overlay_button.config(text="Full view" if compact else "Overlay")
         self._set_packed(self.input_label, not compact, fill="x", before=self.body)
         self._set_packed(self.helper_label, not compact, fill="x", before=self.body)
         self._set_packed(self.diagnostics, bool(self.appearance["show_diagnostics"]) and not compact, fill="x", before=self.body)
@@ -2799,7 +2817,7 @@ class TranslatorWindow:
         self.paused = not self.paused
         if self.client:
             self.client.set_paused(self.paused)
-        self.pause_button.config(text="RESUME" if self.paused else "PAUSE")
+        self.pause_button.config(text="Resume" if self.paused else "Pause")
 
     def _clear(self) -> None:
         self.source_buffer = ""
