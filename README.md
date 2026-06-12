@@ -58,3 +58,8 @@ The setup screen now supports Basic and Advanced modes, quick theme presets, cus
 ## v16.3 stability verification
 
 The repository now runs `tests/verify_source.py` before desktop packaging. It checks syntax, Tkinter spacing, accidental embedded secrets, PCM16 conversion, realtime-session configuration and headset priority without requiring audio hardware.
+
+
+## v16.4.1 macOS automatic headphone routing
+
+The packaged macOS app now bundles a small Core Audio helper. In System audio mode it creates and maintains `Timur Translator Output`, mirrors playback into `BlackHole 2ch`, follows newly connected headphones automatically, falls back to MacBook speakers after disconnect, and restores the normal physical output when the app closes.

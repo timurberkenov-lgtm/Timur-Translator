@@ -27,6 +27,7 @@ import logging
 import os
 import queue
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -109,6 +110,8 @@ SYSTEM_AUDIO_LABEL = (
 MAC_SYSTEM_AUDIO_WORDS = (
     "blackhole", "soundflower", "loopback", "background music", "vb-cable", "virtual audio"
 )
+MAC_AUDIO_ROUTER_HELPER = "timur_audio_router"
+MAC_AUDIO_ROUTER_INTERVAL_SECONDS = 1.8
 
 
 THEME_PRESETS = {
@@ -755,8 +758,67 @@ def _looks_like_macos_system_audio(device: DeviceInfo) -> bool:
     return _contains_any(lowered, MAC_SYSTEM_AUDIO_WORDS)
 
 
+def _bundled_resource_path(filename: str) -> Optional[Path]:
+    candidates: list[Path] = []
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        candidates.append(Path(bundle_root) / filename)
+    candidates.append(Path(__file__).resolve().parent / filename)
+    candidates.append(Path.cwd() / filename)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def run_macos_audio_router(action: str = "ensure", *, raise_on_error: bool = False) -> Optional[dict]:
+    """Maintain a Core Audio multi-output route: physical output first, BlackHole second.
+
+    The helper is bundled only with the macOS .app. During source-only runs it is
+    optional so developers can still start the script and configure the route by hand.
+    """
+    if not IS_MACOS:
+        return None
+    helper = _bundled_resource_path(MAC_AUDIO_ROUTER_HELPER)
+    if helper is None:
+        message = "macOS audio-router helper is missing; falling back to the manual Multi-Output Device route"
+        logging.warning(message)
+        if raise_on_error:
+            raise RuntimeError(message)
+        return None
+    try:
+        completed = subprocess.run(
+            [str(helper), action], capture_output=True, text=True, timeout=8.0, check=False
+        )
+    except Exception as exc:
+        logging.exception("Could not execute macOS audio router")
+        if raise_on_error:
+            raise RuntimeError(f"macOS audio-router helper could not start: {exc}") from exc
+        return {"ok": False, "error": str(exc)}
+    raw = (completed.stdout or "").strip()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        payload = {"ok": False, "error": raw or (completed.stderr or "unknown helper error").strip()}
+    if completed.returncode != 0 or not payload.get("ok"):
+        error = str(payload.get("error") or completed.stderr or "unknown macOS audio-router error").strip()
+        logging.warning("macOS audio router failed | action=%s | error=%s", action, error)
+        if raise_on_error:
+            raise RuntimeError(
+                "Не удалось автоматически направить звук macOS в наушники и BlackHole. "
+                f"Техническая причина: {error}"
+            )
+    else:
+        logging.info("macOS audio router | action=%s | payload=%s", action, payload)
+    return payload
+
+
 def find_macos_system_audio_input_config() -> AudioInputConfig:
     """Find BlackHole (or another virtual CoreAudio input) and probe it with PortAudio."""
+    # Keep the system output on an app-managed multi-output route. The route
+    # follows newly connected headphones and always mirrors playback into
+    # BlackHole so system-audio translation keeps working without manual edits.
+    run_macos_audio_router("ensure", raise_on_error=False)
     devices = list_input_devices()
     candidates = [device for device in devices if _looks_like_macos_system_audio(device)]
     candidates.sort(key=lambda item: ("blackhole 2ch" in _device_text(item), "blackhole" in _device_text(item)), reverse=True)
@@ -1118,6 +1180,8 @@ class RealtimeTranslationClient:
             self.threads.append(threading.Thread(target=self._playback_loop, daemon=True, name="translation-playback"))
         if self.audio_source_mode == "microphone" and self.auto_switch_headset:
             self.threads.append(threading.Thread(target=self._headset_monitor_loop, daemon=True, name="headset-monitor"))
+        if self.audio_source_mode == "system" and IS_MACOS:
+            self.threads.append(threading.Thread(target=self._mac_audio_route_monitor_loop, daemon=True, name="mac-audio-route"))
         for thread in self.threads:
             thread.start()
         self._emit_stats(force=True)
@@ -1136,6 +1200,8 @@ class RealtimeTranslationClient:
         self._send_json({"type": "session.close"}, ignore_errors=True)
         time.sleep(0.08)
         self._close_socket()
+        if self.audio_source_mode == "system" and IS_MACOS:
+            run_macos_audio_router("restore", raise_on_error=False)
 
     def _enqueue_audio(self, payload: bytes) -> None:
         try:
@@ -1239,6 +1305,25 @@ class RealtimeTranslationClient:
         finally:
             self._close_input_stream(stream)
             pa.terminate()
+
+    def _mac_audio_route_monitor_loop(self) -> None:
+        """Keep macOS output mirrored to BlackHole while following headphones automatically."""
+        last_physical = ""
+        try:
+            while self.running.is_set():
+                payload = run_macos_audio_router("ensure", raise_on_error=False)
+                if payload and payload.get("ok"):
+                    physical = str(payload.get("physical", "")).strip()
+                    if physical and physical != last_physical:
+                        last_physical = physical
+                        logging.info("macOS output auto-routed to %s + BlackHole", physical)
+                        self.callbacks.on_status(f"Listening · auto-routed to {physical} + BlackHole", GREEN)
+                elif payload and payload.get("error"):
+                    self.callbacks.on_error(f"macOS auto-route unavailable: {payload.get('error')}")
+                self.running.wait(MAC_AUDIO_ROUTER_INTERVAL_SECONDS)
+        finally:
+            run_macos_audio_router("restore", raise_on_error=False)
+            logging.info("macOS automatic audio-route monitor stopped")
 
     def _mac_system_audio_capture_loop(self) -> None:
         """Capture macOS system audio from BlackHole or another virtual CoreAudio input."""
@@ -2035,7 +2120,7 @@ class SetupWindow:
         grid.pack(fill="x")
         grid.grid_columnconfigure(0, weight=1)
         grid.grid_columnconfigure(1, weight=1)
-        system_text = "Translate YouTube, Zoom, Meet or any audio playing through BlackHole." if self.is_macos else "Translate YouTube, Zoom, Meet or any sound playing through Windows."
+        system_text = "Translate YouTube, Zoom, Meet or any audio playing through BlackHole. Headphones are routed automatically while the translator is running." if self.is_macos else "Translate YouTube, Zoom, Meet or any sound playing through Windows."
         items = [
             ("microphone", "🎤  Microphone", "Translate my own voice from the selected microphone.", "For speaking"),
             ("system", "🔊  System audio", system_text, "Recommended"),
@@ -2180,7 +2265,7 @@ class SetupWindow:
         self.device_box.configure(state="readonly" if is_mic else "disabled")
         if self.is_macos:
             normal_hint = "AUTO prefers a connected headset microphone and falls back to the Mac microphone when needed."
-            system_hint = "Microphone settings are inactive while System audio is selected. Configure BlackHole 2ch and a Multi-Output Device in Audio MIDI Setup."
+            system_hint = "Microphone settings are inactive while System audio is selected. Install BlackHole 2ch once. The translator will automatically maintain the Multi-Output route and follow connected headphones."
         else:
             normal_hint = "AUTO tests Windows driver duplicates, prefers a headset microphone, and falls back to the laptop microphone."
             system_hint = "Microphone settings are inactive while System audio is selected. Windows audio is captured through the playback loopback device."
@@ -2659,7 +2744,7 @@ class TranslatorWindow:
             self.root,
             text=(
                 (
-                    "Listening to macOS system audio through BlackHole. Keep the Multi-Output Device selected while YouTube or the interview call is playing."
+                    "Listening to macOS system audio through BlackHole. Connected headphones are followed automatically while translation is running."
                     if IS_MACOS
                     else "Listening to Windows system audio. Play a YouTube video or keep the interview call audible in your headphones."
                 )

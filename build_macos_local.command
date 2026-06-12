@@ -27,6 +27,8 @@ python3 -m venv .buildvenv
 rm -rf build dist release Timur-Translator-Realtime-macOS-*.zip
 mkdir -p release
 iconutil -c icns assets/TimurTranslator.iconset -o assets/TimurTranslator.icns
+clang -fobjc-arc -framework Foundation -framework CoreAudio macos/timur_audio_router.m -o macos/timur_audio_router
+chmod +x macos/timur_audio_router
 
 .buildvenv/bin/python -m PyInstaller \
   --noconfirm \
@@ -40,6 +42,7 @@ iconutil -c icns assets/TimurTranslator.iconset -o assets/TimurTranslator.icns
   --hidden-import pyaudio \
   --collect-submodules websocket \
   --collect-data certifi \
+  --add-binary "macos/timur_audio_router:." \
   macos/timur_translator.py
 
 APP="dist/Timur Translator Realtime.app"

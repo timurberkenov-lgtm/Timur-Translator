@@ -27,18 +27,17 @@ QUICK START · MICROPHONE MODE
 
 QUICK START · YOUTUBE / ZOOM / MEET / INTERVIEW AUDIO
 ----------------------------------------------------
-1. Double-click install_macos.command.
-2. Double-click install_blackhole_macos.command.
-3. Restart your Mac.
-4. Open Audio MIDI Setup.
-5. In the lower-left corner click +, then Create Multi-Output Device.
-6. Tick your headphones or Mac speakers and BlackHole 2ch.
-7. Keep your real headphones / speakers as the top clock device.
-8. Enable Drift Correction for BlackHole 2ch.
-9. Right-click Multi-Output Device and choose Use This Device For Sound Output.
-10. Double-click run_macos.command.
-11. Select: System audio · YouTube / Zoom / Meet / interview · BlackHole.
-12. Play a YouTube video or start the online call.
+1. Install BlackHole 2ch once.
+2. Restart your Mac.
+3. Launch the packaged Timur Translator Realtime.app.
+4. Select: System audio · YouTube / Zoom / Meet / interview · BlackHole.
+5. Start translation and play a YouTube video or open the interview call.
+
+The packaged app automatically creates and maintains `Timur Translator Output`.
+It mirrors playback to BlackHole and follows connected headphones while the
+translator is running. When the app closes, the normal physical output is
+restored. Manual Audio MIDI Setup changes are only a fallback if Core Audio
+routing fails on a particular Mac.
 
 BUILD A NATIVE .APP
 -------------------

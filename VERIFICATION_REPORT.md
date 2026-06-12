@@ -40,3 +40,22 @@ This release candidate was checked without real user credentials and without acc
 - Real BlackHole routing on macOS.
 - Live OpenAI Realtime translation with a funded API account.
 - Native `.exe` and `.app` packaging through GitHub Actions runners.
+
+
+## v16.4.1 macOS automatic headphone route
+
+Verified without physical hardware:
+- macOS Python source imports and compiles;
+- Windows source still imports and compiles;
+- bundled `timur_audio_router.m` passes Objective-C syntax checking with Core Audio/Foundation interface stubs;
+- GitHub Actions compiles the helper with `clang -fobjc-arc -framework Foundation -framework CoreAudio`;
+- PyInstaller includes the helper with `--add-binary "macos/timur_audio_router:."`;
+- local macOS builder performs the same compile-and-bundle step;
+- source verification asserts the helper source, aggregate-device markers and monitoring hooks are present;
+- normal microphone mode remains separate from macOS system-audio routing.
+
+Hardware-dependent validation still required on a real Mac:
+- connect/disconnect wired headphones;
+- connect/disconnect AirPods or a Bluetooth headset;
+- confirm playback remains audible while `BlackHole 2ch` receives a non-zero peak;
+- confirm the physical output restores after closing Timur Translator.

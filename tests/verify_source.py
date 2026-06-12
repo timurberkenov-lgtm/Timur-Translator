@@ -99,3 +99,28 @@ assert Path(ssl_options["ca_certs"]).is_file()
 assert "sslopt=websocket_ssl_options()" in source_text
 
 print(f"Verified {platform_folder}: packaged TLS CA bundle")
+
+if platform_folder == "macos":
+    router_source = ROOT / "macos" / "timur_audio_router.m"
+    if not router_source.is_file():
+        fail("macOS Core Audio router source is missing")
+    router_text = router_source.read_text(encoding="utf-8")
+    for marker in (
+        "AudioHardwareCreateAggregateDevice",
+        "AudioHardwareDestroyAggregateDevice",
+        "kAudioHardwarePropertyDefaultOutputDevice",
+        'RouteName = @"Timur Translator Output"',
+        '@"subdevices"',
+        '@"stacked": @NO',
+    ):
+        if marker not in router_text:
+            fail(f"macOS router source is missing marker: {marker}")
+    workflow = (ROOT / ".github" / "workflows" / "build-desktop.yml").read_text(encoding="utf-8")
+    local_builder = (ROOT / "build_macos_local.command").read_text(encoding="utf-8")
+    for build_text, label in ((workflow, "GitHub workflow"), (local_builder, "local macOS builder")):
+        if "timur_audio_router.m" not in build_text or '--add-binary "macos/timur_audio_router:."' not in build_text:
+            fail(f"{label} does not compile and bundle the macOS Core Audio router")
+    for marker in ("run_macos_audio_router", "_mac_audio_route_monitor_loop", "MAC_AUDIO_ROUTER_INTERVAL_SECONDS"):
+        if marker not in source_text:
+            fail(f"macOS Python source is missing automatic-route marker: {marker}")
+    print("Verified macos: automatic headphone route helper is compiled, bundled and monitored")
